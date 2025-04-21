@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate rocket;
+#[macro_use]
+extern crate rocket_ws;
 
 mod models;
 use models::*;
@@ -7,17 +9,17 @@ use models::*;
 use rocket::{
     tokio::sync::broadcast::{channel, Sender},
     State,
+    tokio::select,
 };
-use rocket::futures::{SinkExt, StreamExt};
-use rocket::response::stream::{Event, EventStream};
 use rocket::serde::{Deserialize, Serialize};
-use rocket::tokio::select;
 use rocket::fs::{FileServer, relative};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use sqlx::sqlite::SqlitePool;
 use md5::{Md5, Digest};
 use hex;
 use serde_json;
+use rocket_ws::{WebSocket, Message, Stream};
+use futures::{stream::StreamExt, SinkExt};
 
 struct ChatState {
     tx: Sender<ChatMessage>,
@@ -62,6 +64,76 @@ async fn init_db() -> SqlitePool {
     pool
 }
 
+#[get("/ws")]
+fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stream!['a] {
+    let state = state.clone();
+    let mut rx = state.tx.subscribe();
+    state.user_count.fetch_add(1, Ordering::Relaxed);
+    
+    rocket_ws::Stream! { ws =>
+        let mut ws = ws;
+        loop {
+            select! {
+                message = ws.next() => {
+                    match message {
+                        Some(Ok(Message::Text(text))) => {
+                            match serde_json::from_str::<SendMessage>(&text) {
+                                Ok(send_msg) => {
+                                    let chat_msg = ChatMessage {
+                                        username: send_msg.username,
+                                        content: send_msg.content,
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                    };
+                                    
+                                    // 广播消息给所有客户端
+                                    if let Err(e) = state.tx.send(chat_msg.clone()) {
+                                        eprintln!("Failed to broadcast message: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to parse message: {}", e);
+                                    // 发送错误消息给客户端
+                                    let error_msg = ChatMessage {
+                                        username: "Server".to_string(),
+                                        content: "Invalid message format".to_string(),
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                    };
+                                    if let Ok(response) = serde_json::to_string(&error_msg) {
+                                        yield Message::Text(response);
+                                    }
+                                }
+                            }
+                        }
+                        Some(Ok(Message::Close(_))) => {
+                            state.user_count.fetch_sub(1, Ordering::Relaxed);
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            eprintln!("WebSocket error: {}", e);
+                            break;
+                        }
+                        None => break,
+                        _ => {}
+                    }
+                }
+                // 处理从广播通道接收的消息
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(chat_msg) => {
+                            if let Ok(response) = serde_json::to_string(&chat_msg) {
+                                yield Message::Text(response);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to receive broadcast message: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
@@ -81,14 +153,13 @@ async fn main() {
     println!("📝 API Endpoints:");
     println!("   - Login:    POST http://localhost:8000/login");
     println!("   - Register: POST http://localhost:8000/register");
-    println!("   - Chat:     GET  http://localhost:8000/events");
-    println!("   - Send:     POST http://localhost:8000/send");
+    println!("   - WebSocket: WS  http://localhost:8000/ws");
     println!("📱 Web Interface: http://localhost:8000");
 
     let _ = rocket::build()
         .manage(state)
         .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![events, send, login, register])
+        .mount("/", routes![ws_handler, login, register])
         .launch()
         .await;
 }
@@ -146,35 +217,4 @@ async fn register(request: rocket::serde::json::Json<RegisterRequest>, state: &S
             token: None,
         }),
     }
-}
-
-#[get("/events")]
-async fn events(state: &State<ChatState>) -> EventStream![] {
-    let mut rx = state.tx.subscribe();
-
-    EventStream! {
-        let mut interval = rocket::tokio::time::interval(std::time::Duration::from_millis(100));
-        loop {
-            select! {
-                msg = rx.recv() => {
-                    if let Ok(msg) = msg {
-                        yield Event::data(serde_json::to_string(&msg).unwrap());
-                    }
-                }
-                _ = interval.tick() => {
-                    // 保持连接活跃
-                }
-            }
-        }
-    }
-}
-
-#[post("/send", data = "<message>")]
-async fn send(message: rocket::serde::json::Json<SendMessage>, state: &State<ChatState>) {
-    let msg = ChatMessage {
-        username: message.username.clone(),
-        content: message.content.clone(),
-        timestamp: chrono::Utc::now().timestamp(),
-    };
-    let _ = state.tx.send(msg);
 }
