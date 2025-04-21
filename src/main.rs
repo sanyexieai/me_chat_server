@@ -14,7 +14,6 @@ use rocket::{
     State,
 };
 use rocket_ws::{Message, WebSocket};
-use serde_json;
 use sqlx::sqlite::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
