@@ -172,19 +172,20 @@ async fn main() {
 }
 
 #[post("/login", data = "<request>")]
-async fn login(request: rocket::serde::json::Json<LoginRequest>, state: &State<ChatState>) -> rocket::serde::json::Json<AuthResponse> {
+async fn login(
+    request: rocket::serde::json::Json<LoginRequest>,
+    state: &State<ChatState>,
+) -> rocket::serde::json::Json<AuthResponse> {
     let mut hasher = Md5::new();
     hasher.update(request.password.as_bytes());
     let password_hash = hex::encode(hasher.finalize());
 
-    match sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE username = ? AND password = ?"
-    )
-    .bind(&request.username)
-    .bind(&password_hash)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap()
+    match sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ? AND password = ?")
+        .bind(&request.username)
+        .bind(&password_hash)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap()
     {
         Some(_) => rocket::serde::json::Json(AuthResponse {
             success: true,
@@ -200,18 +201,19 @@ async fn login(request: rocket::serde::json::Json<LoginRequest>, state: &State<C
 }
 
 #[post("/register", data = "<request>")]
-async fn register(request: rocket::serde::json::Json<RegisterRequest>, state: &State<ChatState>) -> rocket::serde::json::Json<AuthResponse> {
+async fn register(
+    request: rocket::serde::json::Json<RegisterRequest>,
+    state: &State<ChatState>,
+) -> rocket::serde::json::Json<AuthResponse> {
     let mut hasher = Md5::new();
     hasher.update(request.password.as_bytes());
     let password_hash = hex::encode(hasher.finalize());
 
-    match sqlx::query(
-        "INSERT INTO users (username, password) VALUES (?, ?)"
-    )
-    .bind(&request.username)
-    .bind(&password_hash)
-    .execute(&state.db)
-    .await
+    match sqlx::query("INSERT INTO users (username, password) VALUES (?, ?)")
+        .bind(&request.username)
+        .bind(&password_hash)
+        .execute(&state.db)
+        .await
     {
         Ok(_) => rocket::serde::json::Json(AuthResponse {
             success: true,
