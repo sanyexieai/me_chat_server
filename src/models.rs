@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use rocket::serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
@@ -25,4 +25,4 @@ pub struct AuthResponse {
     pub success: bool,
     pub message: String,
     pub token: Option<String>,
-} 
+}

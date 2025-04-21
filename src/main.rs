@@ -6,20 +6,20 @@ extern crate rocket_ws;
 mod models;
 use models::*;
 
+use futures::{stream::StreamExt, SinkExt};
+use hex;
+use md5::{Digest, Md5};
+use rocket::fs::{relative, FileServer};
+use rocket::serde::{Deserialize, Serialize};
 use rocket::{
+    tokio::select,
     tokio::sync::broadcast::{channel, Sender},
     State,
-    tokio::select,
 };
-use rocket::serde::{Deserialize, Serialize};
-use rocket::fs::{FileServer, relative};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use sqlx::sqlite::SqlitePool;
-use md5::{Md5, Digest};
-use hex;
+use rocket_ws::{Message, Stream, WebSocket};
 use serde_json;
-use rocket_ws::{WebSocket, Message, Stream};
-use futures::{stream::StreamExt, SinkExt};
+use sqlx::sqlite::SqlitePool;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct ChatState {
     tx: Sender<ChatMessage>,
@@ -44,17 +44,17 @@ async fn init_db() -> SqlitePool {
     // 获取当前工作目录
     let current_dir = std::env::current_dir().unwrap();
     let db_path = current_dir.join("chat.db");
-    
+
     // 创建数据库连接选项
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true);
-    
+
     // 创建数据库连接
     let pool = SqlitePool::connect_with(options)
         .await
         .expect("Failed to connect to database");
-    
+
     // 运行迁移
     sqlx::migrate!("./migrations")
         .run(&pool)
@@ -69,7 +69,7 @@ fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stre
     let state = state.clone();
     let mut rx = state.tx.subscribe();
     state.user_count.fetch_add(1, Ordering::Relaxed);
-    
+
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
         // 发送初始用户数量
@@ -94,7 +94,7 @@ fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stre
                                         content: send_msg.content,
                                         timestamp: chrono::Utc::now().timestamp(),
                                     };
-                                    
+
                                     if let Err(e) = state.tx.send(chat_msg.clone()) {
                                         eprintln!("Failed to broadcast message: {}", e);
                                     }
