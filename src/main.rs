@@ -14,9 +14,9 @@ use rocket::{
     State,
 };
 use rocket_ws::{Message, WebSocket};
+use serde_json;
 use sqlx::sqlite::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use serde_json;
 
 struct ChatState {
     tx: Sender<ChatMessage>,
