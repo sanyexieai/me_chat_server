@@ -72,6 +72,16 @@ fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stre
     
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
+        // 发送初始用户数量
+        let user_count = state.user_count.load(Ordering::Relaxed);
+        let count_msg = serde_json::json!({
+            "type": "user_count",
+            "count": user_count
+        });
+        if let Ok(response) = serde_json::to_string(&count_msg) {
+            yield Message::Text(response);
+        }
+
         loop {
             select! {
                 message = ws.next() => {
@@ -85,14 +95,12 @@ fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stre
                                         timestamp: chrono::Utc::now().timestamp(),
                                     };
                                     
-                                    // 广播消息给所有客户端
                                     if let Err(e) = state.tx.send(chat_msg.clone()) {
                                         eprintln!("Failed to broadcast message: {}", e);
                                     }
                                 }
                                 Err(e) => {
                                     eprintln!("Failed to parse message: {}", e);
-                                    // 发送错误消息给客户端
                                     let error_msg = ChatMessage {
                                         username: "Server".to_string(),
                                         content: "Invalid message format".to_string(),
@@ -116,7 +124,6 @@ fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stre
                         _ => {}
                     }
                 }
-                // 处理从广播通道接收的消息
                 msg = rx.recv() => {
                     match msg {
                         Ok(chat_msg) => {

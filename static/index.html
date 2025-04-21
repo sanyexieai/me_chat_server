@@ -224,15 +224,20 @@
             
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
-                const messageElement = document.createElement('div');
-                messageElement.className = `message ${message.username === 'Server' ? 'server-message' : 'user-message'}`;
-                messageElement.innerHTML = `
-                    <span class="username">${message.username}</span>
-                    <div>${message.content}</div>
-                    <span class="time">${new Date(message.timestamp * 1000).toLocaleTimeString()}</span>
-                `;
-                document.getElementById('messages').appendChild(messageElement);
-                document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+                if (message.type === 'user_count') {
+                    onlineCount = message.count;
+                    document.getElementById('onlineCount').textContent = onlineCount;
+                } else {
+                    const messageElement = document.createElement('div');
+                    messageElement.className = `message ${message.username === 'Server' ? 'server-message' : 'user-message'}`;
+                    messageElement.innerHTML = `
+                        <span class="username">${message.username}</span>
+                        <div>${message.content}</div>
+                        <span class="time">${new Date(message.timestamp * 1000).toLocaleTimeString()}</span>
+                    `;
+                    document.getElementById('messages').appendChild(messageElement);
+                    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+                }
             };
 
             ws.onopen = () => {
