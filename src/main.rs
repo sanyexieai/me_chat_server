@@ -1,13 +1,10 @@
 #[macro_use]
 extern crate rocket;
-#[macro_use]
-extern crate rocket_ws;
 
 mod models;
 use models::*;
 
-use futures::{stream::StreamExt, SinkExt};
-use hex;
+use futures::stream::StreamExt;
 use md5::{Digest, Md5};
 use rocket::fs::{relative, FileServer};
 use rocket::serde::{Deserialize, Serialize};
@@ -16,10 +13,10 @@ use rocket::{
     tokio::sync::broadcast::{channel, Sender},
     State,
 };
-use rocket_ws::{Message, Stream, WebSocket};
-use serde_json;
+use rocket_ws::{Message, WebSocket};
 use sqlx::sqlite::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use serde_json;
 
 struct ChatState {
     tx: Sender<ChatMessage>,
@@ -65,18 +62,18 @@ async fn init_db() -> SqlitePool {
 }
 
 #[get("/ws")]
-fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stream!['a] {
-    let state = state.clone();
-    let mut rx = state.tx.subscribe();
+fn ws_handler(ws: WebSocket, state: &State<ChatState>) -> rocket_ws::Stream!['_] {
+    let tx = state.tx.clone();
+    let mut rx = tx.subscribe();
     state.user_count.fetch_add(1, Ordering::Relaxed);
 
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
         // 发送初始用户数量
-        let user_count = state.user_count.load(Ordering::Relaxed);
+        let count = state.user_count.load(Ordering::Relaxed);
         let count_msg = serde_json::json!({
             "type": "user_count",
-            "count": user_count
+            "count": count
         });
         if let Ok(response) = serde_json::to_string(&count_msg) {
             yield Message::Text(response);
@@ -95,7 +92,7 @@ fn ws_handler<'a>(ws: WebSocket, state: &'a State<ChatState>) -> rocket_ws::Stre
                                         timestamp: chrono::Utc::now().timestamp(),
                                     };
 
-                                    if let Err(e) = state.tx.send(chat_msg.clone()) {
+                                    if let Err(e) = tx.send(chat_msg.clone()) {
                                         eprintln!("Failed to broadcast message: {}", e);
                                     }
                                 }
