@@ -1,0 +1,30 @@
+# 使用 Rust 官方镜像作为构建环境
+FROM rust:latest as builder
+
+WORKDIR /app
+
+# 将代码复制到容器中
+COPY . .
+
+# 构建 Rust 项目
+RUN cargo build --release
+
+# 使用一个更轻量的镜像来运行
+FROM debian:bullseye-slim
+
+WORKDIR /app
+
+# 将构建好的二进制文件复制到新的镜像中
+COPY --from=builder /app/target/release/me_chat_server .
+
+# 添加可执行权限
+RUN chmod +x me_chat_server
+
+# 暴露端口
+EXPOSE 32000
+
+# 设置环境变量（如果需要）
+ENV PORT 32000
+
+# 启动应用
+CMD ["/bin/sh", "-c", "./me_chat_server"]
