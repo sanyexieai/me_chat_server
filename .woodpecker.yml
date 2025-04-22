@@ -7,11 +7,7 @@ steps:
       - cp target/x86_64-unknown-linux-musl/release/me_chat_server app
 
   docker:
-    image: docker:dind
-    privileged: true
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker:/var/lib/docker
+    image: docker:latest
     commands:
       - docker build -t me-chat-server:latest .
       - docker run -d -p 18080:18080 -e PORT=18080 me-chat-server:latest
