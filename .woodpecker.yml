@@ -1,15 +1,13 @@
 steps:
-  - name: build
+  build:
     image: rust:latest
     commands:
       - rustup target add x86_64-unknown-linux-musl
       - cargo build --release --target x86_64-unknown-linux-musl
       - cp target/x86_64-unknown-linux-musl/release/me_chat_server app
 
-  - name: deploy
-    image: docker/compose:latest
+  docker:
+    image: docker:latest
     commands:
-      - docker compose up -d
-
-when:
-  branch: main
+      - docker build -t me-chat-server:latest .
+      - docker run -d -p 18080:18080 -e PORT=18080 me-chat-server:latest
