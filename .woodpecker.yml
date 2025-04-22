@@ -8,8 +8,10 @@ steps:
 
   docker:
     image: docker:dind
+    privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker
     commands:
       - docker build -t me-chat-server:latest .
       - docker run -d -p 18080:18080 -e PORT=18080 me-chat-server:latest
