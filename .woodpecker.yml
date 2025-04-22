@@ -1,4 +1,4 @@
-steps:
+pipeline:
   build:
     image: rust:latest
     commands:
@@ -10,3 +10,6 @@ steps:
     image: docker/compose:latest
     commands:
       - docker compose up -d
+
+when:
+  branch: main
