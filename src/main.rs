@@ -16,6 +16,7 @@ use rocket::{
 use rocket_ws::{Message, WebSocket};
 use sqlx::sqlite::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use rocket::response::content;
 
 struct ChatState {
     tx: Sender<ChatMessage>,
@@ -137,6 +138,21 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>) -> rocket_ws::Stream!['_]
     }
 }
 
+#[get("/")]
+fn index() -> content::RawHtml<&'static str> {
+    content::RawHtml(include_str!("../static/index.html"))
+}
+
+#[get("/login")]
+fn login_page() -> content::RawHtml<&'static str> {
+    content::RawHtml(include_str!("../static/login.html"))
+}
+
+#[get("/register")]
+fn register_page() -> content::RawHtml<&'static str> {
+    content::RawHtml(include_str!("../static/register.html"))
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
@@ -159,17 +175,21 @@ async fn main() {
 
     println!("🚀 Chat Server is starting...");
     println!("🌐 Server running at: http://localhost:{}", port);
-    println!("📝 API Endpoints: ");
+    println!("📝 API Endpoints:");
     println!("   - Login:    POST http://localhost:{}/login", port);
     println!("   - Register: POST http://localhost:{}/register", port);
     println!("   - WebSocket: WS  http://localhost:{}/ws", port);
     println!("📱 Web Interface: http://localhost:{}", port);
 
+    let config = rocket::Config::figment()
+        .merge(("port", port))
+        .merge(("address", "0.0.0.0"));
+
     let _ = rocket::build()
         .manage(state)
         .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![ws_handler, login, register])
-        .configure(rocket::Config::figment().merge(("port", port)))
+        .mount("/", routes![ws_handler, login, register, index, login_page, register_page])
+        .configure(config)
         .launch()
         .await;
 }
