@@ -142,6 +142,12 @@ async fn main() {
     // 初始化日志
     env_logger::init();
 
+    // 从环境变量获取端口，默认为8080
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8080);
+
     // 创建广播通道
     let (tx, _) = channel::<ChatMessage>(1024);
     let db = init_db().await;
@@ -152,17 +158,18 @@ async fn main() {
     };
 
     println!("🚀 Chat Server is starting...");
-    println!("🌐 Server running at: http://localhost:8000");
+    println!("🌐 Server running at: http://localhost:{}", port);
     println!("📝 API Endpoints:");
-    println!("   - Login:    POST http://localhost:8000/login");
-    println!("   - Register: POST http://localhost:8000/register");
-    println!("   - WebSocket: WS  http://localhost:8000/ws");
-    println!("📱 Web Interface: http://localhost:8000");
+    println!("   - Login:    POST http://localhost:{}/login", port);
+    println!("   - Register: POST http://localhost:{}/register", port);
+    println!("   - WebSocket: WS  http://localhost:{}/ws", port);
+    println!("📱 Web Interface: http://localhost:{}", port);
 
     let _ = rocket::build()
         .manage(state)
         .mount("/", FileServer::from(relative!("static")))
         .mount("/", routes![ws_handler, login, register])
+        .configure(rocket::Config::figment().merge(("port", port)))
         .launch()
         .await;
 }
