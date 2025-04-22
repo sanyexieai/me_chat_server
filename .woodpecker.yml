@@ -1,12 +1,12 @@
-pipeline:
-  build:
+steps:
+  - name: build
     image: rust:latest
     commands:
       - rustup target add x86_64-unknown-linux-musl
       - cargo build --release --target x86_64-unknown-linux-musl
       - cp target/x86_64-unknown-linux-musl/release/me_chat_server app
 
-  deploy:
+  - name: deploy
     image: docker/compose:latest
     commands:
       - docker compose up -d
