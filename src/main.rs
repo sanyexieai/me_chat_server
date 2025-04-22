@@ -159,7 +159,7 @@ async fn main() {
 
     println!("🚀 Chat Server is starting...");
     println!("🌐 Server running at: http://localhost:{}", port);
-    println!("📝 API Endpoints:");
+    println!("📝 API Endpoints: ");
     println!("   - Login:    POST http://localhost:{}/login", port);
     println!("   - Register: POST http://localhost:{}/register", port);
     println!("   - WebSocket: WS  http://localhost:{}/ws", port);
