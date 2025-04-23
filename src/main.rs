@@ -5,6 +5,7 @@ mod models;
 use models::*;
 
 use futures::stream::StreamExt;
+use include_dir::{include_dir, Dir};
 use md5::{Digest, Md5};
 use rocket::fs::{relative, FileServer};
 use rocket::serde::{Deserialize, Serialize};
@@ -16,6 +17,9 @@ use rocket::{
 use rocket_ws::{Message, WebSocket};
 use sqlx::sqlite::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+// 包含静态文件目录
+static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
 
 struct ChatState {
     tx: Sender<ChatMessage>,
@@ -137,6 +141,18 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>) -> rocket_ws::Stream!['_]
     }
 }
 
+#[get("/")]
+fn index(static_dir: &State<&'static Dir>) -> Option<rocket::response::content::RawHtml<&'static [u8]>> {
+    let file = static_dir.get_file("index.html")?;
+    Some(rocket::response::content::RawHtml(file.contents()))
+}
+
+#[get("/<path..>")]
+fn static_files(path: std::path::PathBuf, static_dir: &State<&'static Dir>) -> Option<rocket::response::content::RawHtml<&'static [u8]>> {
+    let file = static_dir.get_file(path)?;
+    Some(rocket::response::content::RawHtml(file.contents()))
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
@@ -167,8 +183,8 @@ async fn main() {
 
     let _ = rocket::build()
         .manage(state)
-        .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![ws_handler, login, register])
+        .manage(&STATIC_DIR)
+        .mount("/", routes![ws_handler, login, register, static_files, index])
         .configure(rocket::Config::figment().merge(("port", port)))
         .launch()
         .await;
