@@ -220,7 +220,7 @@
                 ws.close();
             }
 
-            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws = new WebSocket(`ws://${window.location.host}/api/ws`);
             
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
@@ -264,7 +264,9 @@
                 try {
                     const message = {
                         username: username,
-                        content: content
+                        content: content,
+                        message_type: "text",
+                        target_id: null
                     };
                     ws.send(JSON.stringify(message));
                     document.getElementById('messageInput').value = '';
