@@ -16,11 +16,75 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             background-color: var(--background-color);
             color: var(--text-color);
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+
+        .friends-panel {
+            width: 250px;
+            background-color: var(--message-bg);
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .friends-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .friends-header h2 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+
+        .add-friend-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .add-friend-btn:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .friends-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .friend-item {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .friend-item:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .friend-item.active {
+            background-color: var(--primary-color);
+        }
+
+        .chat-panel {
+            flex: 1;
         }
 
         .header {
@@ -167,9 +231,87 @@
             transform: translateY(0);
         }
 
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: var(--message-bg);
+            padding: 20px;
+            border-radius: 12px;
+            width: 300px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-color);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .modal-body input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background-color: var(--background-color);
+            color: var(--text-color);
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .modal-footer button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .confirm-btn {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .cancel-btn {
+            background-color: var(--border-color);
+            color: var(--text-color);
+        }
+
         @media (max-width: 768px) {
-            body {
-                padding: 10px;
+            .container {
+                flex-direction: column;
+            }
+
+            .friends-panel {
+                width: 100%;
             }
 
             .header {
@@ -190,18 +332,48 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>聊天室</h1>
-        <div class="user-info">
-            <span>欢迎, <span id="currentUsername"></span></span>
-            <span class="online-count">在线人数: <span id="onlineCount">0</span></span>
-            <button class="logout-btn" id="logoutButton">退出登录</button>
+    <div class="container">
+        <div class="friends-panel">
+            <div class="friends-header">
+                <h2>好友列表</h2>
+                <button class="add-friend-btn" id="addFriendBtn">添加好友</button>
+            </div>
+            <div class="friends-list" id="friendsList">
+                <!-- 好友列表将通过 JavaScript 动态添加 -->
+            </div>
+        </div>
+        <div class="chat-panel">
+            <div class="header">
+                <h1>聊天室</h1>
+                <div class="user-info">
+                    <span>欢迎, <span id="currentUsername"></span></span>
+                    <span class="online-count">在线人数: <span id="onlineCount">0</span></span>
+                    <button class="logout-btn" id="logoutButton">退出登录</button>
+                </div>
+            </div>
+            <div id="messages"></div>
+            <div class="input-container">
+                <input type="text" id="messageInput" placeholder="输入消息...">
+                <button id="sendButton">发送</button>
+            </div>
         </div>
     </div>
-    <div id="messages"></div>
-    <div class="input-container">
-        <input type="text" id="messageInput" placeholder="输入消息...">
-        <button id="sendButton">发送</button>
+
+    <!-- 添加好友模态框 -->
+    <div class="modal" id="addFriendModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>添加好友</h3>
+                <button class="close-btn" id="closeModalBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="friendUsername" placeholder="输入好友用户名">
+            </div>
+            <div class="modal-footer">
+                <button class="cancel-btn" id="cancelAddBtn">取消</button>
+                <button class="confirm-btn" id="confirmAddBtn">添加</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -214,13 +386,103 @@
 
         let ws = null;
         let onlineCount = 0;
+        let friends = [];
+        let currentChatFriend = null;
+
+        // 获取好友列表
+        async function fetchFriends() {
+            try {
+                const response = await fetch('/api/friends');
+                if (response.ok) {
+                    friends = await response.json();
+                    renderFriendsList();
+                }
+            } catch (error) {
+                console.error('Error fetching friends:', error);
+            }
+        }
+
+        // 渲染好友列表
+        function renderFriendsList() {
+            const friendsList = document.getElementById('friendsList');
+            friendsList.innerHTML = '';
+            
+            // 添加文件传输助手
+            const fileHelper = document.createElement('div');
+            fileHelper.className = `friend-item ${currentChatFriend === '文件传输助手' ? 'active' : ''}`;
+            fileHelper.textContent = '文件传输助手';
+            fileHelper.onclick = () => selectFriend('文件传输助手');
+            friendsList.appendChild(fileHelper);
+
+            // 添加其他好友
+            friends.forEach(friend => {
+                const friendItem = document.createElement('div');
+                friendItem.className = `friend-item ${currentChatFriend === friend.username ? 'active' : ''}`;
+                friendItem.textContent = friend.username;
+                friendItem.onclick = () => selectFriend(friend.username);
+                friendsList.appendChild(friendItem);
+            });
+        }
+
+        // 选择好友
+        function selectFriend(friendUsername) {
+            currentChatFriend = friendUsername;
+            renderFriendsList();
+            // 清空消息列表
+            document.getElementById('messages').innerHTML = '';
+            // 如果是文件传输助手，显示提示消息
+            if (friendUsername === '文件传输助手') {
+                const messageElement = document.createElement('div');
+                messageElement.className = 'message server-message';
+                messageElement.innerHTML = `
+                    <span class="username">系统</span>
+                    <div>你可以在这里给自己发送文件或消息，方便在不同设备间传输</div>
+                    <span class="time">${new Date().toLocaleTimeString()}</span>
+                `;
+                document.getElementById('messages').appendChild(messageElement);
+            }
+        }
+
+        // 添加好友
+        async function addFriend(friendUsername) {
+            try {
+                const response = await fetch('/api/add_friend', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ friend_username: friendUsername })
+                });
+                if (response.ok) {
+                    await fetchFriends();
+                    closeAddFriendModal();
+                } else {
+                    const error = await response.json();
+                    alert(error.message || '添加好友失败');
+                }
+            } catch (error) {
+                console.error('Error adding friend:', error);
+                alert('添加好友失败');
+            }
+        }
+
+        // 打开添加好友模态框
+        function openAddFriendModal() {
+            document.getElementById('addFriendModal').style.display = 'block';
+        }
+
+        // 关闭添加好友模态框
+        function closeAddFriendModal() {
+            document.getElementById('addFriendModal').style.display = 'none';
+            document.getElementById('friendUsername').value = '';
+        }
 
         function connectToChat() {
             if (ws) {
                 ws.close();
             }
 
-            ws = new WebSocket(`ws://${window.location.host}/api/ws`);
+            ws = new WebSocket(`ws://${window.location.host}/ws`);
             
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
@@ -246,7 +508,7 @@
 
             ws.onclose = () => {
                 console.log('WebSocket disconnected');
-                setTimeout(connectToChat, 1000); // 尝试重新连接
+                setTimeout(connectToChat, 1000);
             };
 
             ws.onerror = (error) => {
@@ -266,7 +528,7 @@
                         username: username,
                         content: content,
                         message_type: "text",
-                        target_id: null
+                        target_id: currentChatFriend === '文件传输助手' ? null : (friends.find(f => f.username === currentChatFriend)?.id || null)
                     };
                     ws.send(JSON.stringify(message));
                     document.getElementById('messageInput').value = '';
@@ -279,6 +541,7 @@
             }
         }
 
+        // 事件监听器
         document.getElementById('messageInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 sendMessage();
@@ -286,7 +549,6 @@
         });
 
         document.getElementById('sendButton').addEventListener('click', sendMessage);
-
         document.getElementById('logoutButton').addEventListener('click', () => {
             if (ws) {
                 ws.close();
@@ -295,7 +557,19 @@
             window.location.href = '/login';
         });
 
+        document.getElementById('addFriendBtn').addEventListener('click', openAddFriendModal);
+        document.getElementById('closeModalBtn').addEventListener('click', closeAddFriendModal);
+        document.getElementById('cancelAddBtn').addEventListener('click', closeAddFriendModal);
+        document.getElementById('confirmAddBtn').addEventListener('click', () => {
+            const friendUsername = document.getElementById('friendUsername').value.trim();
+            if (friendUsername) {
+                addFriend(friendUsername);
+            }
+        });
+
+        // 初始化
         connectToChat();
+        fetchFriends();
     </script>
 </body>
 </html> 

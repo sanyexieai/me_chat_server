@@ -94,7 +94,7 @@ async fn init_db() -> SqlitePool {
     pool
 }
 
-#[rocket::get("/api/ws")]
+#[rocket::get("/ws")]
 fn ws_handler(ws: WebSocket, state: &State<ChatState>) -> rocket_ws::Stream!['_] {
     let tx = state.tx.clone();
     let mut rx = tx.subscribe();
