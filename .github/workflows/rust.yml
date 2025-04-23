@@ -22,9 +22,6 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: windows-x86_64
-            setup: |
-              choco install -y llvm
-              $env:Path += ";C:\Program Files\LLVM\bin"
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: macos-x86_64
@@ -33,10 +30,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Setup Windows
-      if: matrix.os == 'windows-latest'
-      run: ${{ matrix.setup }}
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -67,24 +60,21 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: target/${{ matrix.target }}/release/not-locking${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
         with:
-          components: rustfmt, clippy
-          targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-msvc,x86_64-apple-darwin
-
-      - name: Build for all platforms
-        run: |
-          cargo build --release --target x86_64-unknown-linux-gnu
-          cargo build --release --target x86_64-pc-windows-msvc
-          cargo build --release --target x86_64-apple-darwin
+          path: artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -92,6 +82,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            target/x86_64-unknown-linux-gnu/release/not-locking
-            target/x86_64-pc-windows-msvc/release/not-locking.exe
-            target/x86_64-apple-darwin/release/not-locking
+            artifacts/linux-x86_64/not-locking
+            artifacts/windows-x86_64/not-locking.exe
+            artifacts/macos-x86_64/not-locking
