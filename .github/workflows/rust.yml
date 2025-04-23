@@ -65,7 +65,6 @@ jobs:
       with:
         name: ${{ matrix.artifact_name }}
         path: target/${{ matrix.target }}/release/not-locking${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-        retention-days: 5
 
   release:
     needs: build
