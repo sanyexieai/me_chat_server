@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat Room</title>
+    <title>聊天室</title>
     <style>
         :root {
             --primary-color: #2563eb;
@@ -191,23 +191,23 @@
 </head>
 <body>
     <div class="header">
-        <h1>Chat Room</h1>
+        <h1>聊天室</h1>
         <div class="user-info">
-            <span>Welcome, <span id="currentUsername"></span></span>
-            <span class="online-count">Online: <span id="onlineCount">0</span></span>
-            <button class="logout-btn" id="logoutButton">Logout</button>
+            <span>欢迎, <span id="currentUsername"></span></span>
+            <span class="online-count">在线人数: <span id="onlineCount">0</span></span>
+            <button class="logout-btn" id="logoutButton">退出登录</button>
         </div>
     </div>
     <div id="messages"></div>
     <div class="input-container">
-        <input type="text" id="messageInput" placeholder="Type your message...">
-        <button id="sendButton">Send</button>
+        <input type="text" id="messageInput" placeholder="输入消息...">
+        <button id="sendButton">发送</button>
     </div>
 
     <script>
         const username = localStorage.getItem('username');
         if (!username) {
-            window.location.href = '/login.html';
+            window.location.href = '/login';
         }
 
         document.getElementById('currentUsername').textContent = username;
@@ -290,7 +290,7 @@
                 ws.close();
             }
             localStorage.removeItem('username');
-            window.location.href = '/login.html';
+            window.location.href = '/login';
         });
 
         connectToChat();

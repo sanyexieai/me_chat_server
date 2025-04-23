@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register - Chat Server</title>
+    <title>>注册 - 聊天服务器</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -74,25 +74,25 @@
 </head>
 <body>
     <div class="container">
-        <h1>Register</h1>
+        <h1>注册</h1>
         <form id="registerForm">
             <div class="form-group">
-                <label for="username">Username</label>
+                <label for="username">用户名</label>
                 <input type="text" id="username" name="username" required>
             </div>
             <div class="form-group">
-                <label for="password">Password</label>
+                <label for="password">密码</label>
                 <input type="password" id="password" name="password" required>
             </div>
             <div class="form-group">
-                <label for="confirmPassword">Confirm Password</label>
+                <label for="confirmPassword">确认密码</label>
                 <input type="password" id="confirmPassword" name="confirmPassword" required>
             </div>
-            <button type="submit">Register</button>
+            <button type="submit">注册</button>
         </form>
         <div id="error" class="error"></div>
         <div class="links">
-            <a href="/login.html">Already have an account? Login</a>
+            <a href="/login">已有账号？登录</a>
         </div>
     </div>
 
@@ -121,7 +121,7 @@
                 const data = await response.json();
                 if (data.success) {
                     localStorage.setItem('username', data.token);
-                    window.location.href = '/index.html';
+                    window.location.href = '/';
                 } else {
                     errorDiv.textContent = data.message;
                 }

@@ -161,6 +161,11 @@ fn static_files(
         .map(rocket::response::content::RawHtml)
 }
 
+#[get("/")]
+fn index() -> content::RawHtml<&'static str> {
+    content::RawHtml(include_str!("../static/index.html"))
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
@@ -198,6 +203,7 @@ async fn main() {
         .mount(
             "/",
             routes![
+                index,
                 ws_handler,
                 login,
                 register,
