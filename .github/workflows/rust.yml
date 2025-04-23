@@ -57,16 +57,27 @@ jobs:
     - name: Build
       run: |
         cargo build --release
-        ls -la target/release/
 
-    - name: Copy and rename binaries
-      shell: bash
+    - name: List files (Windows)
+      if: matrix.os == 'windows-latest'
+      run: dir target\release\
+
+    - name: List files (Unix)
+      if: matrix.os != 'windows-latest'
+      run: ls -la target/release/
+
+    - name: Copy and rename binaries (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        copy target\release\me_chat_server.exe target\release\me_chat_server-windows-x86_64.exe
+        dir target\release\
+
+    - name: Copy and rename binaries (Unix)
+      if: matrix.os != 'windows-latest'
       run: |
         if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
           cp target/release/me_chat_server target/release/me_chat_server-linux-x86_64
-        elif [ "${{ matrix.os }}" = "windows-latest" ]; then
-          cp target/release/me_chat_server.exe target/release/me_chat_server-windows-x86_64.exe
-        elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+        else
           cp target/release/me_chat_server target/release/me_chat_server-macos-x86_64
         fi
         ls -la target/release/
