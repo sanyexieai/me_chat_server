@@ -187,8 +187,8 @@ async fn main() {
     let _ = rocket::build()
         .manage(state)
         .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![ws_handler, login, register])
-        .configure(rocket::Config::figment().merge(("port", port)))
+        .mount("/", routes![ws_handler, login, register, login_page, register_page])
+        .configure(config)
         .launch()
         .await;
 }
