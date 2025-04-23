@@ -73,6 +73,29 @@
             margin-bottom: 5px;
             cursor: pointer;
             transition: background-color 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .friend-item .type-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            font-size: 12px;
+        }
+
+        .friend-item .type-icon.person {
+            background-color: #3b82f6;
+            color: white;
+        }
+
+        .friend-item .type-icon.group {
+            background-color: #10b981;
+            color: white;
         }
 
         .friend-item:hover {
@@ -81,6 +104,17 @@
 
         .friend-item.active {
             background-color: var(--primary-color);
+        }
+
+        .friends-section {
+            margin-bottom: 15px;
+        }
+
+        .friends-section h3 {
+            margin: 0 0 10px 0;
+            font-size: 1rem;
+            color: var(--text-color);
+            opacity: 0.7;
         }
 
         .chat-panel {
@@ -111,13 +145,6 @@
             display: flex;
             align-items: center;
             gap: 1rem;
-        }
-
-        .online-count {
-            background-color: var(--primary-color);
-            padding: 0.3rem 0.8rem;
-            border-radius: 20px;
-            font-size: 0.9rem;
         }
 
         .logout-btn {
@@ -154,6 +181,17 @@
             animation: fadeIn 0.3s ease;
         }
 
+        .received-message {
+            background-color: var(--message-bg);
+            margin-right: auto;
+            border: 1px solid var(--border-color);
+        }
+
+        .sent-message {
+            background-color: var(--primary-color);
+            margin-left: auto;
+        }
+
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -164,11 +202,6 @@
             color: #a0a0a0;
             margin: 0 auto;
             text-align: center;
-        }
-
-        .user-message {
-            background-color: var(--primary-color);
-            margin-left: auto;
         }
 
         .message .username {
@@ -335,11 +368,11 @@
     <div class="container">
         <div class="friends-panel">
             <div class="friends-header">
-                <h2>好友列表</h2>
+                <h2>聊天列表</h2>
                 <button class="add-friend-btn" id="addFriendBtn">添加好友</button>
             </div>
             <div class="friends-list" id="friendsList">
-                <!-- 好友列表将通过 JavaScript 动态添加 -->
+                <!-- 列表将通过 JavaScript 动态添加 -->
             </div>
         </div>
         <div class="chat-panel">
@@ -347,7 +380,6 @@
                 <h1>聊天室</h1>
                 <div class="user-info">
                     <span>欢迎, <span id="currentUsername"></span></span>
-                    <span class="online-count">在线人数: <span id="onlineCount">0</span></span>
                     <button class="logout-btn" id="logoutButton">退出登录</button>
                 </div>
             </div>
@@ -385,9 +417,11 @@
         document.getElementById('currentUsername').textContent = username;
 
         let ws = null;
-        let onlineCount = 0;
         let friends = [];
-        let currentChatFriend = null;
+        let groups = [];
+        let currentChat = 0; // 默认选中文件传输助手
+        let currentChatType = "person"; // 默认类型为个人
+        let currentUserId = 0; // 当前用户ID
 
         // 获取好友列表
         async function fetchFriends() {
@@ -402,44 +436,112 @@
             }
         }
 
-        // 渲染好友列表
+        // 获取群组列表
+        async function fetchGroups() {
+            try {
+                const response = await fetch('/api/groups');
+                if (response.ok) {
+                    groups = await response.json();
+                    renderFriendsList();
+                }
+            } catch (error) {
+                console.error('Error fetching groups:', error);
+            }
+        }
+
+        // 获取当前用户信息
+        async function fetchCurrentUser() {
+            try {
+                const response = await fetch('/api/current_user');
+                if (response.ok) {
+                    const user = await response.json();
+                    currentUserId = user.id;
+                }
+            } catch (error) {
+                console.error('Error fetching current user:', error);
+            }
+        }
+
+        // 渲染好友和群组列表
         function renderFriendsList() {
             const friendsList = document.getElementById('friendsList');
             friendsList.innerHTML = '';
             
             // 添加文件传输助手
-            const fileHelper = document.createElement('div');
-            fileHelper.className = `friend-item ${currentChatFriend === '文件传输助手' ? 'active' : ''}`;
-            fileHelper.textContent = '文件传输助手';
-            fileHelper.onclick = () => selectFriend('文件传输助手');
-            friendsList.appendChild(fileHelper);
-
-            // 添加其他好友
+            const fileTransferAssistant = document.createElement('div');
+            fileTransferAssistant.className = `friend-item ${currentChat === currentUserId && currentChatType === 'person' ? 'active' : ''}`;
+            fileTransferAssistant.innerHTML = `
+                <span class="type-icon person">F</span>
+                <span>文件传输助手</span>
+            `;
+            fileTransferAssistant.onclick = () => {
+                console.log('File transfer assistant clicked:', currentUserId);
+                selectChat(currentUserId, 'person');
+            };
+            friendsList.appendChild(fileTransferAssistant);
+            
+            // 添加好友
             friends.forEach(friend => {
                 const friendItem = document.createElement('div');
-                friendItem.className = `friend-item ${currentChatFriend === friend.username ? 'active' : ''}`;
-                friendItem.textContent = friend.username;
-                friendItem.onclick = () => selectFriend(friend.username);
+                const friendId = parseInt(friend.id);
+                friendItem.className = `friend-item ${currentChat === friendId && currentChatType === 'person' ? 'active' : ''}`;
+                friendItem.innerHTML = `
+                    <span class="type-icon person">P</span>
+                    <span>${friend.username}</span>
+                `;
+                friendItem.onclick = () => {
+                    console.log('Friend clicked:', friendId);
+                    selectChat(friendId, 'person');
+                };
                 friendsList.appendChild(friendItem);
+            });
+
+            // 添加群组
+            groups.forEach(group => {
+                const groupItem = document.createElement('div');
+                const groupId = parseInt(group.id);
+                groupItem.className = `friend-item ${currentChat === groupId && currentChatType === 'group' ? 'active' : ''}`;
+                groupItem.innerHTML = `
+                    <span class="type-icon group">G</span>
+                    <span>${group.name}</span>
+                `;
+                groupItem.onclick = () => {
+                    console.log('Group clicked:', groupId);
+                    selectChat(groupId, 'group');
+                };
+                friendsList.appendChild(groupItem);
             });
         }
 
-        // 选择好友
-        function selectFriend(friendUsername) {
-            currentChatFriend = friendUsername;
+        // 选择聊天
+        async function selectChat(id, type) {
+            console.log('Before selectChat:', { currentChat, currentChatType, newId: id, newType: type });
+            // 如果是文件传输助手，使用当前用户ID
+            if (id === 0 && type === 'person') {
+                currentChat = currentUserId;
+            } else {
+                currentChat = parseInt(id);
+            }
+            currentChatType = type;
+            console.log('After selectChat:', { currentChat, currentChatType });
             renderFriendsList();
+            
             // 清空消息列表
             document.getElementById('messages').innerHTML = '';
-            // 如果是文件传输助手，显示提示消息
-            if (friendUsername === '文件传输助手') {
-                const messageElement = document.createElement('div');
-                messageElement.className = 'message server-message';
-                messageElement.innerHTML = `
-                    <span class="username">系统</span>
-                    <div>你可以在这里给自己发送文件或消息，方便在不同设备间传输</div>
-                    <span class="time">${new Date().toLocaleTimeString()}</span>
-                `;
-                document.getElementById('messages').appendChild(messageElement);
+            
+            // 加载历史消息
+            try {
+                const targetId = currentChat; // 使用更新后的currentChat
+                const url = type === 'person' ? `/api/messages/${targetId}` : `/api/group_messages/${targetId}`;
+                const response = await fetch(url);
+                if (response.ok) {
+                    const messages = await response.json();
+                    messages.forEach(message => {
+                        appendMessage(message);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading messages:', error);
             }
         }
 
@@ -486,24 +588,13 @@
             
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
-                if (message.type === 'user_count') {
-                    onlineCount = message.count;
-                    document.getElementById('onlineCount').textContent = onlineCount;
-                } else {
-                    const messageElement = document.createElement('div');
-                    messageElement.className = `message ${message.username === 'Server' ? 'server-message' : 'user-message'}`;
-                    messageElement.innerHTML = `
-                        <span class="username">${message.username}</span>
-                        <div>${message.content}</div>
-                        <span class="time">${new Date(message.timestamp * 1000).toLocaleTimeString()}</span>
-                    `;
-                    document.getElementById('messages').appendChild(messageElement);
-                    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
-                }
+                appendMessage(message);
             };
 
             ws.onopen = () => {
                 console.log('WebSocket connected');
+                // 默认选中文件传输助手
+                selectChat(0, 'person');
             };
 
             ws.onclose = () => {
@@ -516,28 +607,52 @@
             };
         }
 
+        // 添加消息到聊天框
+        function appendMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            
+            // 判断消息类型
+            const isSent = message.username === username;
+            const messageClass = isSent ? 'sent-message' : 'received-message';
+            
+            // 只显示发送给自己的消息或自己发送的消息
+            if (message.target_id === currentUserId || isSent) {
+                messageDiv.className = `message ${messageClass}`;
+                messageDiv.innerHTML = `
+                    <span class="username">${message.username}</span>
+                    <span class="content">${message.content}</span>
+                    <span class="time">${new Date(message.timestamp * 1000).toLocaleTimeString()}</span>
+                `;
+                messagesDiv.appendChild(messageDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+        }
+
+        // 发送消息
         async function sendMessage() {
             const content = document.getElementById('messageInput').value.trim();
-            if (content && ws && ws.readyState === WebSocket.OPEN) {
-                const sendButton = document.getElementById('sendButton');
-                sendButton.disabled = true;
-                sendButton.textContent = 'Sending...';
-                
+            if (!content) return;
+
+            if (ws.readyState === WebSocket.OPEN) {
                 try {
                     const message = {
                         username: username,
                         content: content,
                         message_type: "text",
-                        target_id: currentChatFriend === '文件传输助手' ? null : (friends.find(f => f.username === currentChatFriend)?.id || null)
+                        target_type: currentChatType,
+                        target_id: parseInt(currentChat), // 确保target_id是数字
+                        timestamp: Math.floor(Date.now() / 1000)
                     };
+                    console.log('Sending message:', message);
                     ws.send(JSON.stringify(message));
                     document.getElementById('messageInput').value = '';
                 } catch (error) {
-                    console.error('Error sending message:', error);
-                } finally {
-                    sendButton.disabled = false;
-                    sendButton.textContent = 'Send';
+                    console.error('发送消息失败:', error);
+                    alert('发送消息失败，请重试');
                 }
+            } else {
+                alert('WebSocket 连接未就绪，请刷新页面重试');
             }
         }
 
@@ -568,8 +683,18 @@
         });
 
         // 初始化
-        connectToChat();
-        fetchFriends();
+        async function init() {
+            await fetchCurrentUser();
+            await fetchFriends();
+            await fetchGroups();
+            connectToChat();
+            
+            // 默认选中文件传输助手（使用当前用户ID）
+            selectChat(currentUserId, 'person');
+        }
+
+        // 启动初始化
+        init();
     </script>
 </body>
 </html> 

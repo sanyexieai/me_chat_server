@@ -22,7 +22,6 @@ static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
 
 struct ChatState {
     tx: Sender<ChatMessage>,
-    user_count: AtomicUsize,
     db: SqlitePool,
 }
 
@@ -32,7 +31,8 @@ struct ChatMessage {
     content: String,
     timestamp: i64,
     message_type: String,
-    target_id: Option<i64>,
+    target_type: String,
+    target_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,8 +41,8 @@ struct SendMessage {
     content: String,
     #[serde(default = "default_message_type")]
     message_type: String,
-    #[serde(default)]
-    target_id: Option<i64>,
+    target_type: String,
+    target_id: i64,
 }
 
 fn default_message_type() -> String {
@@ -52,6 +52,7 @@ fn default_message_type() -> String {
 // 用户认证结构体
 struct AuthenticatedUser {
     username: String,
+    id: i64,
 }
 
 #[rocket::async_trait]
@@ -61,9 +62,19 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         let cookies = request.cookies();
         if let Some(cookie) = cookies.get_private("username") {
-            Outcome::Success(AuthenticatedUser {
-                username: cookie.value().to_string(),
-            })
+            let username = cookie.value().to_string();
+            let db = request.rocket().state::<SqlitePool>().unwrap();
+            if let Ok(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
+                .bind(&username)
+                .fetch_one(db)
+                .await {
+                Outcome::Success(AuthenticatedUser {
+                    username,
+                    id: user.id,
+                })
+            } else {
+                Outcome::Forward(Status::Unauthorized)
+            }
         } else {
             Outcome::Forward(Status::Unauthorized)
         }
@@ -78,10 +89,14 @@ async fn init_db() -> SqlitePool {
     // 创建数据库连接选项
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(db_path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .busy_timeout(std::time::Duration::from_secs(5));  // 忙时等待超时
 
-    // 创建数据库连接
-    let pool = SqlitePool::connect_with(options)
+    // 使用 SqlitePoolOptions 创建连接池
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(10)
+        .idle_timeout(std::time::Duration::from_secs(30))
+        .connect_with(options)
         .await
         .expect("Failed to connect to database");
 
@@ -95,50 +110,100 @@ async fn init_db() -> SqlitePool {
 }
 
 #[rocket::get("/ws")]
-fn ws_handler(ws: WebSocket, state: &State<ChatState>) -> rocket_ws::Stream!['_] {
+fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) -> rocket_ws::Stream!['_] {
     let tx = state.tx.clone();
     let mut rx = tx.subscribe();
-    state.user_count.fetch_add(1, Ordering::Relaxed);
+    let current_user_id = user.id;
+    let current_username = user.username.clone();
+    let db = state.db.clone();
+
+    println!("WebSocket connection established for user: {} (ID: {})", current_username, current_user_id);
 
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
-        // 发送初始用户数量
-        let count = state.user_count.load(Ordering::Relaxed);
-        let count_msg = serde_json::json!({
-            "type": "user_count",
-            "count": count
-        });
-        if let Ok(response) = serde_json::to_string(&count_msg) {
-            yield WsMessage::Text(response);
-        }
-
         loop {
             select! {
                 message = ws.next() => {
                     match message {
                         Some(Ok(WsMessage::Text(text))) => {
+                            println!("Received message from {}: {}", current_username, text);
                             match serde_json::from_str::<SendMessage>(&text) {
                                 Ok(send_msg) => {
+                                    // 验证目标用户或群组是否存在
+                                    let target_exists = if send_msg.target_type == "person" {
+                                        sqlx::query("SELECT 1 FROM users WHERE id = ?")
+                                            .bind(send_msg.target_id)
+                                            .fetch_optional(&db)
+                                            .await
+                                            .unwrap()
+                                            .is_some()
+                                    } else {
+                                        sqlx::query("SELECT 1 FROM groups WHERE id = ?")
+                                            .bind(send_msg.target_id)
+                                            .fetch_optional(&db)
+                                            .await
+                                            .unwrap()
+                                            .is_some()
+                                    };
+
+                                    if !target_exists {
+                                        let error_msg = ChatMessage {
+                                            username: "Server".to_string(),
+                                            content: format!("目标 {} 不存在", send_msg.target_id),
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            message_type: "error".to_string(),
+                                            target_type: "person".to_string(),
+                                            target_id: current_user_id,
+                                        };
+                                        if let Ok(response) = serde_json::to_string(&error_msg) {
+                                            yield WsMessage::Text(response);
+                                        }
+                                        continue;
+                                    }
+
                                     let chat_msg = ChatMessage {
-                                        username: send_msg.username,
+                                        username: current_username.clone(),
                                         content: send_msg.content,
                                         timestamp: chrono::Utc::now().timestamp(),
                                         message_type: send_msg.message_type,
+                                        target_type: send_msg.target_type,
                                         target_id: send_msg.target_id,
                                     };
 
-                                    if let Err(e) = tx.send(chat_msg.clone()) {
-                                        eprintln!("Failed to broadcast message: {}", e);
+                                    // 保存消息到数据库
+                                    let db = state.db.clone();
+                                    let msg = chat_msg.clone();
+                                    tokio::spawn(async move {
+                                        match sqlx::query(
+                                            "INSERT INTO messages (sender_id, receiver_id, group_id, content, created_at) 
+                                            VALUES (?, ?, ?, ?, ?)"
+                                        )
+                                        .bind(current_user_id)
+                                        .bind(if msg.target_type == "person" { Some(msg.target_id) } else { None })
+                                        .bind(if msg.target_type == "group" { Some(msg.target_id) } else { None })
+                                        .bind(&msg.content)
+                                        .bind(chrono::Utc::now())
+                                        .execute(&db)
+                                        .await {
+                                            Ok(_) => println!("消息已保存到数据库"),
+                                            Err(e) => println!("保存消息失败: {}", e),
+                                        }
+                                    });
+
+                                    // 广播消息
+                                    if let Err(e) = tx.send(chat_msg) {
+                                        println!("广播消息失败: {}", e);
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to parse message: {}", e);
+                                    println!("解析消息失败: {}", e);
                                     let error_msg = ChatMessage {
                                         username: "Server".to_string(),
-                                        content: format!("Invalid message format. Required fields: username, content, message_type, target_id (optional). Error: {}", e),
+                                        content: "消息格式错误".to_string(),
                                         timestamp: chrono::Utc::now().timestamp(),
                                         message_type: "error".to_string(),
-                                        target_id: None,
+                                        target_type: "person".to_string(),
+                                        target_id: current_user_id,
                                     };
                                     if let Ok(response) = serde_json::to_string(&error_msg) {
                                         yield WsMessage::Text(response);
@@ -146,33 +211,66 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>) -> rocket_ws::Stream!['_]
                                 }
                             }
                         }
+                        Some(Ok(WsMessage::Binary(_))) => {
+                            // 忽略二进制消息
+                            continue;
+                        }
+                        Some(Ok(WsMessage::Ping(_))) => {
+                            // 忽略 ping 消息
+                            continue;
+                        }
+                        Some(Ok(WsMessage::Pong(_))) => {
+                            // 忽略 pong 消息
+                            continue;
+                        }
+                        Some(Ok(WsMessage::Frame(_))) => {
+                            // 忽略 frame 消息
+                            continue;
+                        }
                         Some(Ok(WsMessage::Close(_))) => {
-                            state.user_count.fetch_sub(1, Ordering::Relaxed);
+                            println!("WebSocket connection closed for user: {}", current_username);
                             break;
                         }
                         Some(Err(e)) => {
-                            eprintln!("WebSocket error: {}", e);
+                            println!("WebSocket error for user {}: {}", current_username, e);
                             break;
                         }
-                        None => break,
-                        _ => {}
+                        None => {
+                            println!("WebSocket connection ended for user: {}", current_username);
+                            break;
+                        }
                     }
                 }
                 msg = rx.recv() => {
                     match msg {
                         Ok(chat_msg) => {
-                            if let Ok(response) = serde_json::to_string(&chat_msg) {
-                                yield WsMessage::Text(response);
+                            // 只发送给目标用户或群组成员
+                            if (chat_msg.target_type == "person" && chat_msg.target_id == current_user_id) ||
+                               (chat_msg.target_type == "group" && is_group_member(chat_msg.target_id, current_user_id, &db).await) {
+                                if let Ok(response) = serde_json::to_string(&chat_msg) {
+                                    yield WsMessage::Text(response);
+                                }
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to receive broadcast message: {}", e);
+                            println!("接收广播消息失败: {}", e);
                         }
                     }
                 }
             }
         }
     }
+}
+
+// 检查用户是否是群组成员
+async fn is_group_member(group_id: i64, user_id: i64, db: &SqlitePool) -> bool {
+    sqlx::query("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?")
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .unwrap()
+        .is_some()
 }
 
 #[rocket::get("/")]
@@ -453,7 +551,7 @@ async fn get_messages(
         "SELECT * FROM messages 
         WHERE (sender_id = ? AND receiver_id = ?) 
         OR (sender_id = ? AND receiver_id = ?)
-        ORDER BY created_at ASC",
+        ORDER BY created_at ASC"
     )
     .bind(user.id)
     .bind(target_id)
@@ -479,22 +577,14 @@ async fn get_group_messages(
         .unwrap();
 
     // 验证用户是否在群组中
-    let is_member = sqlx::query("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?")
-        .bind(group_id)
-        .bind(user.id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap()
-        .is_some();
-
-    if !is_member {
+    if !is_group_member(group_id, user.id, &state.db).await {
         return rocket::serde::json::Json(Vec::new());
     }
 
     let messages = sqlx::query_as::<_, DbMessage>(
         "SELECT * FROM messages 
         WHERE group_id = ?
-        ORDER BY created_at ASC",
+        ORDER BY created_at ASC"
     )
     .bind(group_id)
     .fetch_all(&state.db)
@@ -502,6 +592,19 @@ async fn get_group_messages(
     .unwrap();
 
     rocket::serde::json::Json(messages)
+}
+
+#[rocket::get("/current_user")]
+async fn get_current_user(
+    state: &State<ChatState>,
+    user: AuthenticatedUser,
+) -> rocket::serde::json::Json<User> {
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
+        .bind(&user.username)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    rocket::serde::json::Json(user)
 }
 
 #[rocket::main]
@@ -520,8 +623,7 @@ async fn main() {
     let db = init_db().await;
     let state = ChatState {
         tx,
-        user_count: AtomicUsize::new(0),
-        db,
+        db: db.clone(),  // 克隆数据库连接池
     };
 
     println!("🚀 Chat Server is starting...");
@@ -538,6 +640,7 @@ async fn main() {
 
     let _ = rocket::build()
         .manage(state)
+        .manage(db)  // 添加数据库连接池作为独立状态
         .mount("/", routes![index, login_page, register_page, static_files, ws_handler])
         .mount(
             "/api",
@@ -550,6 +653,7 @@ async fn main() {
                 get_groups,
                 get_messages,
                 get_group_messages,
+                get_current_user,
             ],
         )
         .configure(config)
