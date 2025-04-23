@@ -7,7 +7,6 @@ use models::*;
 use futures::stream::StreamExt;
 use include_dir::{include_dir, Dir};
 use md5::{Digest, Md5};
-use rocket::fs::{relative, FileServer};
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{
     tokio::select,
@@ -152,6 +151,16 @@ fn register_page() -> content::RawHtml<&'static str> {
     content::RawHtml(include_str!("../static/register.html"))
 }
 
+#[get("/static/<file..>")]
+fn static_files(
+    file: std::path::PathBuf,
+) -> Option<rocket::response::content::RawHtml<&'static str>> {
+    STATIC_DIR
+        .get_file(file)
+        .and_then(|f| f.contents_utf8())
+        .map(rocket::response::content::RawHtml)
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
@@ -186,8 +195,17 @@ async fn main() {
 
     let _ = rocket::build()
         .manage(state)
-        .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![ws_handler, login, register, login_page, register_page])
+        .mount(
+            "/",
+            routes![
+                ws_handler,
+                login,
+                register,
+                login_page,
+                register_page,
+                static_files
+            ],
+        )
         .configure(config)
         .launch()
         .await;
