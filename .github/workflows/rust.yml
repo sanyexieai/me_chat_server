@@ -55,15 +55,26 @@ jobs:
       run: cargo clippy --all-targets --all-features -- -D warnings
 
     - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
+      run: |
+        cargo build --release
+        ls -la target/release/
 
     - name: Run tests
       run: cargo test --verbose
 
+    - name: List build artifacts
+      run: |
+        echo "Build artifacts in target/release/:"
+        ls -la target/release/
+
     - name: Upload Release Asset
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/') && success()
       uses: softprops/action-gh-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        files: target/${{ matrix.target }}/release/${{ matrix.binary }}
+        files: |
+          target/release/${{ matrix.binary }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
