@@ -106,8 +106,8 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 222
         source: "target/release/me_chat_server-linux-x86_64"
-        target: "/vol1/1000/project/chat/"
-        strip_components: 0
+        target: "/vol1/1000/project/chat/me_chat_server-linux-x86_64"
+        strip_components: 2
 
     - name: Build and Run Docker
       if: matrix.os == 'ubuntu-latest' && success()
