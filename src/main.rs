@@ -4,28 +4,25 @@ use models::*;
 use futures::stream::StreamExt;
 use include_dir::{include_dir, Dir};
 use md5::{Digest, Md5};
+use rocket::form::{Form, FromForm};
+use rocket::fs::{FileServer, NamedFile, TempFile};
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
 use rocket::response::content;
-use rocket::serde::{Deserialize, Serialize, json::Json};
+use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::{
-    routes,
+    get, post, routes,
     tokio::select,
     tokio::sync::broadcast::{channel, Sender},
     Request, State,
-    post, get
 };
 use rocket_ws::{Message as WsMessage, WebSocket};
+use serde_json::{json, Value};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
-use rocket::fs::{FileServer, NamedFile, TempFile};
-use rocket::form::{Form, FromForm};
-use rocket::data::{Data, ToByteUnit};
-use std::path::Path;
 use std::fs;
-use std::io::Write;
+use std::path::Path;
 use uuid::Uuid;
-use serde_json::{json, Value};
 
 // 包含静态文件目录
 static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
@@ -694,7 +691,7 @@ async fn get_current_user(
 #[derive(FromForm)]
 struct FileUpload<'r> {
     file: TempFile<'r>,
-    message: String,
+    file_name: String,
 }
 
 #[post("/api/upload_file", data = "<form>")]
@@ -702,6 +699,7 @@ async fn upload_file(mut form: Form<FileUpload<'_>>) -> Result<Json<Value>, Stat
     println!("Received file upload request");
     println!("File name: {:?}", form.file.name());
     println!("File size: {:?}", form.file.len());
+    println!("Full file name: {}", form.file_name);
 
     // 创建上传目录
     let upload_dir = Path::new("uploads");
@@ -712,8 +710,21 @@ async fn upload_file(mut form: Form<FileUpload<'_>>) -> Result<Json<Value>, Stat
         }
     }
 
-    // 生成唯一文件名
-    let file_name = Uuid::new_v4().to_string();
+    // 获取扩展名
+    let extension = Path::new(&form.file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    println!("Extension: {}", extension);
+
+    // 生成唯一文件名，保留扩展名
+    let file_name = if !extension.is_empty() {
+        format!("{}.{}", Uuid::new_v4(), extension)
+    } else {
+        Uuid::new_v4().to_string()
+    };
+    println!("Generated filename: {}", file_name);
+    
     let file_path = upload_dir.join(&file_name);
 
     // 保存文件
