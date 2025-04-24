@@ -77,7 +77,6 @@ jobs:
       run: |
         if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
           cp target/release/me_chat_server target/release/me_chat_server-linux-x86_64
-          cp target/release/me_chat_server me_chat_server-linux-x86_64
         else
           cp target/release/me_chat_server target/release/me_chat_server-macos-x86_64
         fi
@@ -106,7 +105,7 @@ jobs:
         username: ${{ secrets.SSH_USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 222
-        source: "me_chat_server-linux-x86_64"
+        source: "target/release/me_chat_server-linux-x86_64"
         target: "/vol1/1000/project/chat/"
         strip_components: 2
         rm: true
