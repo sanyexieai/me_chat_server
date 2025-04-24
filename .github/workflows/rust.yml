@@ -139,6 +139,6 @@ jobs:
           # 运行新容器
           echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S docker run -d \
             --name me_chat_server \
-            -p 8080:8080 \
+            -p 32000:8080 \
             -v /vol1/1000/project/chat/data:/app/data \
             me_chat_server
