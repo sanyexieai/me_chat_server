@@ -6,7 +6,9 @@ edition = "2021"
 [dependencies]
 rocket = { version = "0.5.1", features = ["json", "secrets", "tls"] }
 rocket_ws = "0.1.1"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "json", "migrate"] }
+rocket_dyn_templates = { version = "0.2.0", features = ["tera"] }
+rocket_db_pools = { version = "0.2.0", features = ["sqlx_sqlite"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "json", "migrate"] }
 tokio = { version = "1.44", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -16,3 +18,4 @@ hex = "0.4"
 include_dir = "0.7"
 env_logger = "0.11"
 futures = "0.3"
+uuid = { version = "1.16", features = ["v4"] }

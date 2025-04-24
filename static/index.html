@@ -227,6 +227,49 @@
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
+        #fileInput {
+            display: none;
+        }
+
+        .file-btn {
+            padding: 12px;
+            background-color: var(--border-color);
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-btn:hover {
+            background-color: var(--primary-color);
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background-color: var(--border-color);
+            border-radius: 12px;
+            margin-bottom: 10px;
+        }
+
+        .file-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .remove-file {
+            background: none;
+            border: none;
+            color: var(--text-color);
+            cursor: pointer;
+            padding: 4px;
+        }
+
         #messageInput {
             flex: 1;
             padding: 12px 16px;
@@ -385,6 +428,8 @@
             </div>
             <div id="messages"></div>
             <div class="input-container">
+                <input type="file" id="fileInput">
+                <button class="file-btn" id="fileButton">📎</button>
                 <input type="text" id="messageInput" placeholder="输入消息...">
                 <button id="sendButton">发送</button>
             </div>
@@ -424,6 +469,7 @@
         let currentUserId = 0; // 当前用户ID
         // 添加消息存储结构
         let chatMessages = new Map(); // 使用Map存储每个会话的消息列表
+        let selectedFile = null;
 
         // 获取会话的唯一标识
         function getChatKey(chatId, chatType) {
@@ -661,20 +707,30 @@
             
             messages.forEach(message => {
                 const messageDiv = document.createElement('div');
-                // 如果是自己给自己发的消息，则不显示接收端消息
                 if(message.receiver_id == message.sender_id && message.direction == "receive"){
                     return;
                 }
                 
-                // 判断消息类型：发送的消息或接收的消息
                 const isSent = message.username === username;
-                
-                // 普通消息处理
                 const messageClass = isSent ? 'sent-message' : 'received-message';
                 messageDiv.className = `message ${messageClass}`;
+
+                let contentHtml = '';
+                if (message.message_type === 'file') {
+                    contentHtml = `
+                        <div class="file-message">
+                            <a href="${message.content}" target="_blank" class="file-link">
+                                📎 ${message.file_name || '文件'} (${formatFileSize(message.file_size)})
+                            </a>
+                        </div>
+                    `;
+                } else {
+                    contentHtml = `<span class="content">${message.content}</span>`;
+                }
+
                 messageDiv.innerHTML = `
                     <span class="username">${message.username}</span>
-                    <span class="content">${message.content}</span>
+                    ${contentHtml}
                     <span class="time">${new Date(message.timestamp * 1000).toLocaleTimeString()}</span>
                 `;
                 messagesDiv.appendChild(messageDiv);
@@ -717,31 +773,100 @@
             }
         }
 
-        // 发送消息
-        function sendMessage() {
+        // 文件选择处理
+        document.getElementById('fileButton').addEventListener('click', () => {
+            document.getElementById('fileInput').click();
+        });
+
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                selectedFile = file;
+                // 显示文件信息
+                const fileInfo = document.createElement('div');
+                fileInfo.className = 'file-info';
+                fileInfo.innerHTML = `
+                    <span class="file-name">${file.name}</span>
+                    <button class="remove-file" onclick="removeSelectedFile()">×</button>
+                `;
+                const inputContainer = document.querySelector('.input-container');
+                inputContainer.parentNode.insertBefore(fileInfo, inputContainer);
+            }
+        });
+
+        function removeSelectedFile() {
+            selectedFile = null;
+            document.getElementById('fileInput').value = '';
+            const fileInfo = document.querySelector('.file-info');
+            if (fileInfo) {
+                fileInfo.remove();
+            }
+        }
+
+        // 修改发送消息函数
+        async function sendMessage() {
             if (!currentChat) return;
             const messageInput = document.getElementById('messageInput');
             const content = messageInput.value.trim();
-            if (!content) return;
+            
+            if (!content && !selectedFile) return;
 
-            const message = {
+            let message = {
                 username: username,
                 content: content,
-                message_type: 'text',
+                message_type: selectedFile ? 'file' : 'text',
                 target_type: currentChatType,
                 direction: 'send',
                 sender_id: currentUserId,
                 receiver_id: currentChat
             };
 
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(message));
-                // 立即显示发送的消息
-                appendMessage({
-                    ...message,
-                    timestamp: Math.floor(Date.now() / 1000)
-                });
-                messageInput.value = '';
+            if (selectedFile) {
+                // 创建FormData对象
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                formData.append('message', JSON.stringify(message));
+
+                try {
+                    const response = await fetch('/api/upload_file', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        message = {
+                            ...message,
+                            content: result.file_url,
+                            file_name: selectedFile.name,
+                            file_size: selectedFile.size
+                        };
+                        
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(message));
+                            appendMessage({
+                                ...message,
+                                timestamp: Math.floor(Date.now() / 1000)
+                            });
+                            messageInput.value = '';
+                            removeSelectedFile();
+                        }
+                    } else {
+                        alert('文件上传失败');
+                    }
+                } catch (error) {
+                    console.error('Error uploading file:', error);
+                    alert('文件上传失败');
+                }
+            } else {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(message));
+                    appendMessage({
+                        ...message,
+                        timestamp: Math.floor(Date.now() / 1000)
+                    });
+                    messageInput.value = '';
+                }
             }
         }
 
@@ -770,6 +895,15 @@
                 addFriend(friendUsername);
             }
         });
+
+        // 添加文件大小格式化函数
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
 
         // 初始化
         async function init() {

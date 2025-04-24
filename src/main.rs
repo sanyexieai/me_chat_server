@@ -7,16 +7,25 @@ use md5::{Digest, Md5};
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
 use rocket::response::content;
-use rocket::serde::{Deserialize, Serialize};
+use rocket::serde::{Deserialize, Serialize, json::Json};
 use rocket::{
     routes,
     tokio::select,
     tokio::sync::broadcast::{channel, Sender},
     Request, State,
+    post, get
 };
 use rocket_ws::{Message as WsMessage, WebSocket};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
+use rocket::fs::{FileServer, NamedFile, TempFile};
+use rocket::form::{Form, FromForm};
+use rocket::data::{Data, ToByteUnit};
+use std::path::Path;
+use std::fs;
+use std::io::Write;
+use uuid::Uuid;
+use serde_json::{json, Value};
 
 // 包含静态文件目录
 static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
@@ -555,13 +564,29 @@ async fn get_groups(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+struct Friendship {
+    id: i64,
+    user_id: i64,
+    friend_id: i64,
+    created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+struct Group {
+    id: i64,
+    name: String,
+    created_by: i64,
+    created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct DbMessage {
     id: i64,
     sender_id: i64,
     receiver_id: Option<i64>,
     group_id: Option<i64>,
     content: String,
-    created_at: chrono::DateTime<chrono::Utc>,
+    created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -666,10 +691,62 @@ async fn get_current_user(
     rocket::serde::json::Json(user)
 }
 
+#[derive(FromForm)]
+struct FileUpload<'r> {
+    file: TempFile<'r>,
+    message: String,
+}
+
+#[post("/api/upload_file", data = "<form>")]
+async fn upload_file(mut form: Form<FileUpload<'_>>) -> Result<Json<Value>, Status> {
+    println!("Received file upload request");
+    println!("File name: {:?}", form.file.name());
+    println!("File size: {:?}", form.file.len());
+
+    // 创建上传目录
+    let upload_dir = Path::new("uploads");
+    if !upload_dir.exists() {
+        if let Err(e) = fs::create_dir_all(upload_dir) {
+            eprintln!("Failed to create uploads directory: {}", e);
+            return Err(Status::InternalServerError);
+        }
+    }
+
+    // 生成唯一文件名
+    let file_name = Uuid::new_v4().to_string();
+    let file_path = upload_dir.join(&file_name);
+
+    // 保存文件
+    if let Err(e) = form.file.copy_to(&file_path).await {
+        eprintln!("Failed to save file: {}", e);
+        return Err(Status::InternalServerError);
+    }
+
+    println!("File saved successfully: {}", file_path.display());
+
+    // 返回文件URL
+    Ok(Json(json!({
+        "success": true,
+        "file_url": format!("/files/{}", file_name)
+    })))
+}
+
+#[get("/files/<file_name>")]
+async fn get_file(file_name: &str) -> Option<NamedFile> {
+    let file_path = Path::new("uploads").join(file_name);
+    NamedFile::open(file_path).await.ok()
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
     env_logger::init();
+
+    // 创建上传目录
+    let upload_dir = Path::new("uploads");
+    if !upload_dir.exists() {
+        fs::create_dir_all(upload_dir).expect("Failed to create uploads directory");
+    }
 
     // 从环境变量获取端口，默认为8080
     let port = std::env::var("PORT")
@@ -699,10 +776,18 @@ async fn main() {
 
     let _ = rocket::build()
         .manage(state)
-        .manage(db) // 添加数据库连接池作为独立状态
+        .manage(db)
         .mount(
             "/",
-            routes![index, login_page, register_page, static_files, ws_handler],
+            routes![
+                index,
+                login_page,
+                register_page,
+                static_files,
+                ws_handler,
+                upload_file,
+                get_file
+            ],
         )
         .mount(
             "/api",
@@ -715,9 +800,10 @@ async fn main() {
                 get_groups,
                 get_messages,
                 get_group_messages,
-                get_current_user,
+                get_current_user
             ],
         )
+        .mount("/files", FileServer::from("uploads"))
         .configure(config)
         .launch()
         .await;
