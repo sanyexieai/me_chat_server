@@ -123,10 +123,10 @@ jobs:
           cat > Dockerfile << 'EOF'
           FROM ubuntu:jammy
           WORKDIR /app
-          COPY me_chat_server-linux-x86_64 /app/me_chat_server
-          RUN chmod +x /app/me_chat_server
+          COPY me_chat_server-linux-x86_64 /app/
+          RUN chmod +x /app/me_chat_server-linux-x86_64
           EXPOSE 8080
-          CMD ["/app/me_chat_server"]
+          CMD ["/app/me_chat_server-linux-x86_64"]
           EOF
           
           # 停止并删除旧容器
