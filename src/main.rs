@@ -4,18 +4,19 @@ use models::*;
 use futures::stream::StreamExt;
 use include_dir::{include_dir, Dir};
 use md5::{Digest, Md5};
+use rocket::http::Status;
+use rocket::request::{FromRequest, Outcome};
+use rocket::response::content;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{
+    routes,
     tokio::select,
     tokio::sync::broadcast::{channel, Sender},
-    State, Request, routes,
+    Request, State,
 };
 use rocket_ws::{Message as WsMessage, WebSocket};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
-use rocket::http::Status;
-use rocket::request::{FromRequest, Outcome};
-use rocket::response::content;
 
 // 包含静态文件目录
 static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
@@ -71,7 +72,8 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
             if let Ok(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
                 .bind(&username)
                 .fetch_one(db)
-                .await {
+                .await
+            {
                 Outcome::Success(AuthenticatedUser {
                     username,
                     id: user.id,
@@ -94,7 +96,7 @@ async fn init_db() -> SqlitePool {
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true)
-        .busy_timeout(std::time::Duration::from_secs(5));  // 忙时等待超时
+        .busy_timeout(std::time::Duration::from_secs(5)); // 忙时等待超时
 
     // 使用 SqlitePoolOptions 创建连接池
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -114,14 +116,21 @@ async fn init_db() -> SqlitePool {
 }
 
 #[rocket::get("/ws")]
-fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) -> rocket_ws::Stream!['_] {
+fn ws_handler(
+    ws: WebSocket,
+    state: &State<ChatState>,
+    user: AuthenticatedUser,
+) -> rocket_ws::Stream!['_] {
     let tx = state.tx.clone();
     let mut rx = tx.subscribe();
     let current_user_id = user.id;
     let current_username = user.username.clone();
     let db = state.db.clone();
 
-    println!("WebSocket connection established for user: {} (ID: {})", current_username, current_user_id);
+    println!(
+        "WebSocket connection established for user: {} (ID: {})",
+        current_username, current_user_id
+    );
 
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
@@ -183,7 +192,7 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                                     let msg = chat_msg.clone();
                                     tokio::spawn(async move {
                                         match sqlx::query(
-                                            "INSERT INTO messages (sender_id, receiver_id, group_id, content, message_type, created_at) 
+                                            "INSERT INTO messages (sender_id, receiver_id, group_id, content, message_type, created_at)
                                             VALUES (?, ?, ?, ?, ?, ?)"
                                         )
                                         .bind(current_user_id)
@@ -330,7 +339,10 @@ async fn login(
         .unwrap()
     {
         Some(_) => {
-            cookies.add_private(rocket::http::Cookie::new("username", request.username.clone()));
+            cookies.add_private(rocket::http::Cookie::new(
+                "username",
+                request.username.clone(),
+            ));
             rocket::serde::json::Json(AuthResponse {
                 success: true,
                 message: "Login successful".to_string(),
@@ -362,7 +374,10 @@ async fn register(
         .await
     {
         Ok(_) => {
-            cookies.add_private(rocket::http::Cookie::new("username", request.username.clone()));
+            cookies.add_private(rocket::http::Cookie::new(
+                "username",
+                request.username.clone(),
+            ));
             rocket::serde::json::Json(AuthResponse {
                 success: true,
                 message: "Registration successful".to_string(),
@@ -581,7 +596,7 @@ async fn get_messages(
         JOIN users u ON m.sender_id = u.id
         WHERE (m.sender_id = ? AND m.receiver_id = ?) 
         OR (m.sender_id = ? AND m.receiver_id = ?)
-        ORDER BY m.created_at ASC"
+        ORDER BY m.created_at ASC",
     )
     .bind(user.id)
     .bind(target_id)
@@ -597,7 +612,9 @@ async fn get_messages(
         receiver_id: row.get("receiver_id"),
         group_id: row.get("group_id"),
         content: row.get("content"),
-        timestamp: row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").timestamp(),
+        timestamp: row
+            .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            .timestamp(),
         direction: row.get("direction"),
         username: row.get("username"),
     })
@@ -626,7 +643,7 @@ async fn get_group_messages(
     let messages = sqlx::query_as::<_, DbMessage>(
         "SELECT * FROM messages 
         WHERE group_id = ?
-        ORDER BY created_at ASC"
+        ORDER BY created_at ASC",
     )
     .bind(group_id)
     .fetch_all(&state.db)
@@ -665,7 +682,7 @@ async fn main() {
     let db = init_db().await;
     let state = ChatState {
         tx,
-        db: db.clone(),  // 克隆数据库连接池
+        db: db.clone(), // 克隆数据库连接池
     };
 
     println!("🚀 Chat Server is starting...");
@@ -682,8 +699,11 @@ async fn main() {
 
     let _ = rocket::build()
         .manage(state)
-        .manage(db)  // 添加数据库连接池作为独立状态
-        .mount("/", routes![index, login_page, register_page, static_files, ws_handler])
+        .manage(db) // 添加数据库连接池作为独立状态
+        .mount(
+            "/",
+            routes![index, login_page, register_page, static_files, ws_handler],
+        )
         .mount(
             "/api",
             routes![
