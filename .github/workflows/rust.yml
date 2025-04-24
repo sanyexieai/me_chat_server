@@ -129,15 +129,15 @@ jobs:
           EOF
           
           # 停止并删除旧容器
-          docker stop me_chat_server || true
-          docker rm me_chat_server || true
+          sudo docker stop me_chat_server || true
+          sudo docker rm me_chat_server || true
           
           # 构建新镜像
-          docker build -t me_chat_server .
+          sudo docker build -t me_chat_server .
           
           # 运行新容器
-          docker run -d \
+          sudo docker run -d \
             --name me_chat_server \
-            -p 32000:8080 \
+            -p 8080:8080 \
             -v /vol1/1000/project/chat/data:/app/data \
             me_chat_server
