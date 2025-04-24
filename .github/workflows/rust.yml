@@ -140,5 +140,5 @@ jobs:
           echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S docker run -d \
             --name me_chat_server \
             -p 32000:8080 \
-            -v /vol1/1000/project/chat/data:/app/data \
+            -v /vol1/1000/project/chat:/app \
             me_chat_server
