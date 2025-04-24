@@ -12,7 +12,7 @@ use rocket::{
 };
 use rocket_ws::{Message as WsMessage, WebSocket};
 use sqlx::sqlite::SqlitePool;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use sqlx::Row;
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
 use rocket::response::content;
@@ -32,7 +32,9 @@ struct ChatMessage {
     timestamp: i64,
     message_type: String,
     target_type: String,
-    target_id: i64,
+    direction: String,
+    sender_id: i64,
+    receiver_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +44,9 @@ struct SendMessage {
     #[serde(default = "default_message_type")]
     message_type: String,
     target_type: String,
-    target_id: i64,
+    direction: String,
+    sender_id: i64,
+    receiver_id: i64,
 }
 
 fn default_message_type() -> String {
@@ -132,14 +136,14 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                                     // 验证目标用户或群组是否存在
                                     let target_exists = if send_msg.target_type == "person" {
                                         sqlx::query("SELECT 1 FROM users WHERE id = ?")
-                                            .bind(send_msg.target_id)
+                                            .bind(send_msg.receiver_id)
                                             .fetch_optional(&db)
                                             .await
                                             .unwrap()
                                             .is_some()
                                     } else {
                                         sqlx::query("SELECT 1 FROM groups WHERE id = ?")
-                                            .bind(send_msg.target_id)
+                                            .bind(send_msg.receiver_id)
                                             .fetch_optional(&db)
                                             .await
                                             .unwrap()
@@ -149,11 +153,13 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                                     if !target_exists {
                                         let error_msg = ChatMessage {
                                             username: "Server".to_string(),
-                                            content: format!("目标 {} 不存在", send_msg.target_id),
+                                            content: format!("目标 {} 不存在", send_msg.receiver_id),
                                             timestamp: chrono::Utc::now().timestamp(),
                                             message_type: "error".to_string(),
                                             target_type: "person".to_string(),
-                                            target_id: current_user_id,
+                                            direction: "receive".to_string(),
+                                            sender_id: current_user_id,
+                                            receiver_id: current_user_id,
                                         };
                                         if let Ok(response) = serde_json::to_string(&error_msg) {
                                             yield WsMessage::Text(response);
@@ -167,7 +173,9 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                                         timestamp: chrono::Utc::now().timestamp(),
                                         message_type: send_msg.message_type,
                                         target_type: send_msg.target_type,
-                                        target_id: send_msg.target_id,
+                                        direction: "send".to_string(),
+                                        sender_id: current_user_id,
+                                        receiver_id: send_msg.receiver_id,
                                     };
 
                                     // 保存消息到数据库
@@ -175,13 +183,14 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                                     let msg = chat_msg.clone();
                                     tokio::spawn(async move {
                                         match sqlx::query(
-                                            "INSERT INTO messages (sender_id, receiver_id, group_id, content, created_at) 
-                                            VALUES (?, ?, ?, ?, ?)"
+                                            "INSERT INTO messages (sender_id, receiver_id, group_id, content, message_type, created_at) 
+                                            VALUES (?, ?, ?, ?, ?, ?)"
                                         )
                                         .bind(current_user_id)
-                                        .bind(if msg.target_type == "person" { Some(msg.target_id) } else { None })
-                                        .bind(if msg.target_type == "group" { Some(msg.target_id) } else { None })
+                                        .bind(if msg.target_type == "person" { Some(msg.receiver_id) } else { None })
+                                        .bind(if msg.target_type == "group" { Some(msg.receiver_id) } else { None })
                                         .bind(&msg.content)
+                                        .bind(&msg.message_type)
                                         .bind(chrono::Utc::now())
                                         .execute(&db)
                                         .await {
@@ -203,7 +212,9 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                                         timestamp: chrono::Utc::now().timestamp(),
                                         message_type: "error".to_string(),
                                         target_type: "person".to_string(),
-                                        target_id: current_user_id,
+                                        direction: "receive".to_string(),
+                                        sender_id: current_user_id,
+                                        receiver_id: current_user_id,
                                     };
                                     if let Ok(response) = serde_json::to_string(&error_msg) {
                                         yield WsMessage::Text(response);
@@ -245,9 +256,12 @@ fn ws_handler(ws: WebSocket, state: &State<ChatState>, user: AuthenticatedUser) 
                     match msg {
                         Ok(chat_msg) => {
                             // 只发送给目标用户或群组成员
-                            if (chat_msg.target_type == "person" && chat_msg.target_id == current_user_id) ||
-                               (chat_msg.target_type == "group" && is_group_member(chat_msg.target_id, current_user_id, &db).await) {
-                                if let Ok(response) = serde_json::to_string(&chat_msg) {
+                            if (chat_msg.target_type == "person" && chat_msg.receiver_id == current_user_id) ||
+                               (chat_msg.target_type == "group" && is_group_member(chat_msg.receiver_id, current_user_id, &db).await) {
+                                // 设置接收方向
+                                let mut received_msg = chat_msg.clone();
+                                received_msg.direction = "receive".to_string();
+                                if let Ok(response) = serde_json::to_string(&received_msg) {
                                     yield WsMessage::Text(response);
                                 }
                             }
@@ -535,23 +549,39 @@ struct DbMessage {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MessageResponse {
+    id: i64,
+    sender_id: i64,
+    receiver_id: Option<i64>,
+    group_id: Option<i64>,
+    content: String,
+    timestamp: i64,
+    direction: String,
+    username: String,
+}
+
 #[rocket::get("/messages/<target_id>")]
 async fn get_messages(
     state: &State<ChatState>,
     user: AuthenticatedUser,
     target_id: i64,
-) -> rocket::serde::json::Json<Vec<DbMessage>> {
+) -> rocket::serde::json::Json<Vec<MessageResponse>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&user.username)
         .fetch_one(&state.db)
         .await
         .unwrap();
 
-    let messages = sqlx::query_as::<_, DbMessage>(
-        "SELECT * FROM messages 
-        WHERE (sender_id = ? AND receiver_id = ?) 
-        OR (sender_id = ? AND receiver_id = ?)
-        ORDER BY created_at ASC"
+    let messages = sqlx::query(
+        "SELECT m.id, m.sender_id, m.receiver_id, m.group_id, m.content, m.created_at, 
+        'history' as direction,
+        u.username 
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE (m.sender_id = ? AND m.receiver_id = ?) 
+        OR (m.sender_id = ? AND m.receiver_id = ?)
+        ORDER BY m.created_at ASC"
     )
     .bind(user.id)
     .bind(target_id)
@@ -559,7 +589,19 @@ async fn get_messages(
     .bind(user.id)
     .fetch_all(&state.db)
     .await
-    .unwrap();
+    .unwrap()
+    .iter()
+    .map(|row| MessageResponse {
+        id: row.get("id"),
+        sender_id: row.get("sender_id"),
+        receiver_id: row.get("receiver_id"),
+        group_id: row.get("group_id"),
+        content: row.get("content"),
+        timestamp: row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").timestamp(),
+        direction: row.get("direction"),
+        username: row.get("username"),
+    })
+    .collect();
 
     rocket::serde::json::Json(messages)
 }

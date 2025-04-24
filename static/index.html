@@ -422,6 +422,28 @@
         let currentChat = 0; // 默认选中文件传输助手
         let currentChatType = "person"; // 默认类型为个人
         let currentUserId = 0; // 当前用户ID
+        // 添加消息存储结构
+        let chatMessages = new Map(); // 使用Map存储每个会话的消息列表
+
+        // 获取会话的唯一标识
+        function getChatKey(chatId, chatType) {
+            return `${chatType}_${chatId}`;
+        }
+
+        // 获取当前会话的消息列表
+        function getCurrentChatMessages() {
+            const chatKey = getChatKey(currentChat, currentChatType);
+            return chatMessages.get(chatKey) || [];
+        }
+
+        // 添加消息到指定会话
+        function addMessageToChat(chatId, chatType, message) {
+            const chatKey = getChatKey(chatId, chatType);
+            if (!chatMessages.has(chatKey)) {
+                chatMessages.set(chatKey, []);
+            }
+            chatMessages.get(chatKey).push(message);
+        }
 
         // 获取好友列表
         async function fetchFriends() {
@@ -515,7 +537,8 @@
 
         // 选择聊天
         async function selectChat(id, type) {
-            console.log('Before selectChat:', { currentChat, currentChatType, newId: id, newType: type });
+            console.log('切换会话:', { id, type });
+            
             // 如果是文件传输助手，使用当前用户ID
             if (id === 0 && type === 'person') {
                 currentChat = currentUserId;
@@ -523,25 +546,44 @@
                 currentChat = parseInt(id);
             }
             currentChatType = type;
-            console.log('After selectChat:', { currentChat, currentChatType });
+            
+            console.log('当前会话:', { currentChat, currentChatType });
             renderFriendsList();
             
-            // 清空消息列表
-            document.getElementById('messages').innerHTML = '';
+            // 渲染当前会话的消息
+            renderChatMessages(currentChat, currentChatType);
             
             // 加载历史消息
             try {
-                const targetId = currentChat; // 使用更新后的currentChat
+                const targetId = currentChat;
                 const url = type === 'person' ? `/api/messages/${targetId}` : `/api/group_messages/${targetId}`;
+                console.log('加载历史消息:', url);
+                
                 const response = await fetch(url);
                 if (response.ok) {
                     const messages = await response.json();
+                    console.log('历史消息:', messages);
+                    
+                    // 清空当前会话的消息列表
+                    const chatKey = getChatKey(currentChat, currentChatType);
+                    chatMessages.set(chatKey, []);
+                    
+                    // 添加历史消息
                     messages.forEach(message => {
-                        appendMessage(message);
+                        // 设置消息方向
+                        if (message.sender_id === currentUserId) {
+                            message.direction = 'send';
+                        } else {
+                            message.direction = 'receive';
+                        }
+                        addMessageToChat(currentChat, currentChatType, message);
                     });
+                    
+                    // 重新渲染消息
+                    renderChatMessages(currentChat, currentChatType);
                 }
             } catch (error) {
-                console.error('Error loading messages:', error);
+                console.error('加载历史消息失败:', error);
             }
         }
 
@@ -588,13 +630,15 @@
             
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
+                // 添加接收标识
+                message.direction = "receive";
                 appendMessage(message);
             };
 
             ws.onopen = () => {
                 console.log('WebSocket connected');
                 // 默认选中文件传输助手
-                selectChat(0, 'person');
+                selectChat(currentUserId, 'person');
             };
 
             ws.onclose = () => {
@@ -607,17 +651,26 @@
             };
         }
 
-        // 添加消息到聊天框
-        function appendMessage(message) {
+        // 渲染指定会话的消息
+        function renderChatMessages(chatId, chatType) {
             const messagesDiv = document.getElementById('messages');
-            const messageDiv = document.createElement('div');
+            messagesDiv.innerHTML = '';
             
-            // 判断消息类型
-            const isSent = message.username === username;
-            const messageClass = isSent ? 'sent-message' : 'received-message';
+            const chatKey = getChatKey(chatId, chatType);
+            const messages = chatMessages.get(chatKey) || [];
             
-            // 只显示发送给自己的消息或自己发送的消息
-            if (message.target_id === currentUserId || isSent) {
+            messages.forEach(message => {
+                const messageDiv = document.createElement('div');
+                // 如果是自己给自己发的消息，则不显示接收端消息
+                if(message.receiver_id == message.sender_id && message.direction == "receive"){
+                    return;
+                }
+                
+                // 判断消息类型：发送的消息或接收的消息
+                const isSent = message.username === username;
+                
+                // 普通消息处理
+                const messageClass = isSent ? 'sent-message' : 'received-message';
                 messageDiv.className = `message ${messageClass}`;
                 messageDiv.innerHTML = `
                     <span class="username">${message.username}</span>
@@ -625,34 +678,70 @@
                     <span class="time">${new Date(message.timestamp * 1000).toLocaleTimeString()}</span>
                 `;
                 messagesDiv.appendChild(messageDiv);
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            });
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // 修改appendMessage函数
+        function appendMessage(message) {
+            console.log('收到消息:', message);
+            
+            // 确定目标会话
+            let targetChatId;
+            let targetChatType;
+            
+            if (message.target_type === 'group') {
+                // 群组消息
+                targetChatId = message.group_id;
+                targetChatType = 'group';
+            } else {
+                // 个人消息
+                if (message.sender_id === currentUserId) {
+                    // 如果是自己发送的消息，目标就是接收者
+                    targetChatId = message.receiver_id;
+                } else {
+                    // 如果是接收的消息，目标就是发送者
+                    targetChatId = message.sender_id;
+                }
+                targetChatType = 'person';
+            }
+            
+            console.log('消息目标:', { targetChatId, targetChatType });
+            
+            // 添加消息到对应会话
+            addMessageToChat(targetChatId, targetChatType, message);
+            
+            // 如果当前正在查看这个会话，则更新显示
+            if (currentChat === targetChatId && currentChatType === targetChatType) {
+                renderChatMessages(currentChat, currentChatType);
             }
         }
 
         // 发送消息
-        async function sendMessage() {
-            const content = document.getElementById('messageInput').value.trim();
+        function sendMessage() {
+            if (!currentChat) return;
+            const messageInput = document.getElementById('messageInput');
+            const content = messageInput.value.trim();
             if (!content) return;
 
-            if (ws.readyState === WebSocket.OPEN) {
-                try {
-                    const message = {
-                        username: username,
-                        content: content,
-                        message_type: "text",
-                        target_type: currentChatType,
-                        target_id: parseInt(currentChat), // 确保target_id是数字
-                        timestamp: Math.floor(Date.now() / 1000)
-                    };
-                    console.log('Sending message:', message);
-                    ws.send(JSON.stringify(message));
-                    document.getElementById('messageInput').value = '';
-                } catch (error) {
-                    console.error('发送消息失败:', error);
-                    alert('发送消息失败，请重试');
-                }
-            } else {
-                alert('WebSocket 连接未就绪，请刷新页面重试');
+            const message = {
+                username: username,
+                content: content,
+                message_type: 'text',
+                target_type: currentChatType,
+                direction: 'send',
+                sender_id: currentUserId,
+                receiver_id: currentChat
+            };
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+                // 立即显示发送的消息
+                appendMessage({
+                    ...message,
+                    timestamp: Math.floor(Date.now() / 1000)
+                });
+                messageInput.value = '';
             }
         }
 
