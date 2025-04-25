@@ -4,10 +4,8 @@ mod models;
 use models::*;
 
 use futures::stream::StreamExt;
-use hex;
 use include_dir::{include_dir, Dir};
 use md5::{Digest, Md5};
-use mime_guess;
 use rocket::form::{Form, FromForm};
 use rocket::fs::{FileServer, TempFile};
 use rocket::http::Status;
