@@ -235,7 +235,7 @@ fn ws_handler(
                                     let mut file_path = None;
                                     let mut file_name = None;
                                     let mut file_size = None;
-                                    
+
                                     if send_msg.message_type == "file" {
                                         if let Ok(row) = sqlx::query(
                                             "SELECT file_path, file_name, file_size FROM files WHERE id = ?"
@@ -986,16 +986,12 @@ async fn upload_file_chunk(
 }
 
 #[rocket::get("/files/<file_id>")]
-async fn get_file_info(
-    state: &State<ChatState>,
-    file_id: i64,
-) -> Result<Json<Value>, Status> {
-    match sqlx::query(
-        "SELECT file_path, file_name, file_size FROM files WHERE id = ?"
-    )
-    .bind(file_id)
-    .fetch_one(&state.db)
-    .await {
+async fn get_file_info(state: &State<ChatState>, file_id: i64) -> Result<Json<Value>, Status> {
+    match sqlx::query("SELECT file_path, file_name, file_size FROM files WHERE id = ?")
+        .bind(file_id)
+        .fetch_one(&state.db)
+        .await
+    {
         Ok(row) => {
             let file_info = json!({
                 "file_path": row.get::<String, _>("file_path"),
@@ -1003,8 +999,8 @@ async fn get_file_info(
                 "file_size": row.get::<i64, _>("file_size")
             });
             Ok(Json(file_info))
-        },
-        Err(_) => Err(Status::NotFound)
+        }
+        Err(_) => Err(Status::NotFound),
     }
 }
 
