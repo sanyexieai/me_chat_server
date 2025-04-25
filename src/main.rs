@@ -169,7 +169,10 @@ fn ws_handler(
     let current_username = user.username.clone();
     let db = state.db.clone();
 
-    println!("WebSocket 连接已建立，用户: {} (ID: {})", current_username, current_user_id);
+    println!(
+        "WebSocket 连接已建立，用户: {} (ID: {})",
+        current_username, current_user_id
+    );
 
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
