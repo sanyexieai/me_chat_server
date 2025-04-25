@@ -454,9 +454,9 @@
 
         .progress-bar {
             width: 100%;
-            height: 8px;
+            height: 4px;
             background-color: var(--border-color);
-            border-radius: 4px;
+            border-radius: 2px;
             overflow: hidden;
         }
 
@@ -472,6 +472,22 @@
             font-size: 0.9rem;
             color: var(--text-color);
             text-align: center;
+        }
+
+        .upload-message {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .upload-text {
+            color: var(--text-color);
+            font-size: 0.9rem;
+        }
+
+        .error-message {
+            color: #dc3545;
+            font-size: 0.9rem;
         }
     </style>
 </head>
@@ -813,6 +829,21 @@
                             </div>
                         `;
                     }
+                } else if (message.message_type === 'upload') {
+                    contentHtml = `
+                        <div class="upload-message">
+                            <span class="upload-text">${message.content}</span>
+                            <div class="progress-bar">
+                                <div class="progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    `;
+                } else if (message.message_type === 'error') {
+                    contentHtml = `
+                        <div class="error-message">
+                            <span class="error-text">${message.content}</span>
+                        </div>
+                    `;
                 } else {
                     contentHtml = `<span class="content">${message.content}</span>`;
                 }
@@ -871,25 +902,17 @@
             const file = e.target.files[0];
             if (file) {
                 selectedFile = file;
-                // 显示文件信息
-                const fileInfo = document.createElement('div');
-                fileInfo.className = 'file-info';
-                fileInfo.innerHTML = `
-                    <span class="file-name">${file.name}</span>
-                    <button class="remove-file" onclick="removeSelectedFile()">×</button>
-                `;
-                const inputContainer = document.querySelector('.input-container');
-                inputContainer.parentNode.insertBefore(fileInfo, inputContainer);
+                // 将文件名显示在输入框中
+                const messageInput = document.getElementById('messageInput');
+                messageInput.value = `📎 ${file.name}`;
+                messageInput.focus();
             }
         });
 
         function removeSelectedFile() {
             selectedFile = null;
             document.getElementById('fileInput').value = '';
-            const fileInfo = document.querySelector('.file-info');
-            if (fileInfo) {
-                fileInfo.remove();
-            }
+            document.getElementById('messageInput').value = '';
         }
 
         // 修改发送消息函数
@@ -911,7 +934,19 @@
             };
 
             if (selectedFile) {
+                let uploadMessageId = null;
                 try {
+                    // 显示上传中的消息
+                    const uploadMessage = {
+                        ...message,
+                        content: `正在上传文件: ${selectedFile.name}`,
+                        message_type: 'upload',
+                        timestamp: Math.floor(Date.now() / 1000)
+                    };
+                    appendMessage(uploadMessage);
+                    // 保存上传消息的ID
+                    uploadMessageId = getCurrentChatMessages().length - 1;
+
                     // 分片上传
                     const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
                     const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
@@ -931,13 +966,41 @@
                                 ...message,
                                 timestamp: Math.floor(Date.now() / 1000)
                             });
+                            
+                            // 移除上传中的消息
+                            if (uploadMessageId !== null) {
+                                const chatKey = getChatKey(currentChat, currentChatType);
+                                const messages = chatMessages.get(chatKey) || [];
+                                messages.splice(uploadMessageId, 1);
+                                chatMessages.set(chatKey, messages);
+                                renderChatMessages(currentChat, currentChatType);
+                            }
+                            
                             messageInput.value = '';
                             removeSelectedFile();
                         }
                     }
                 } catch (error) {
                     console.error('Error uploading file:', error);
-                    alert('文件上传失败');
+                    // 显示上传失败的消息
+                    const errorMessage = {
+                        ...message,
+                        content: `文件上传失败: ${selectedFile.name}`,
+                        message_type: 'error',
+                        timestamp: Math.floor(Date.now() / 1000)
+                    };
+                    appendMessage(errorMessage);
+                    
+                    // 移除上传中的消息
+                    if (uploadMessageId !== null) {
+                        const chatKey = getChatKey(currentChat, currentChatType);
+                        const messages = chatMessages.get(chatKey) || [];
+                        messages.splice(uploadMessageId, 1);
+                        chatMessages.set(chatKey, messages);
+                        renderChatMessages(currentChat, currentChatType);
+                    }
+                    
+                    removeSelectedFile();
                 }
             } else {
                 if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1005,28 +1068,15 @@
             return fileId;
         }
 
-        // 添加上传进度显示函数
+        // 修改上传进度显示函数
         function updateUploadProgress(progress) {
-            let progressDiv = document.querySelector('.upload-progress');
-            if (!progressDiv) {
-                progressDiv = document.createElement('div');
-                progressDiv.className = 'upload-progress';
-                const inputContainer = document.querySelector('.input-container');
-                inputContainer.parentNode.insertBefore(progressDiv, inputContainer);
-            }
-            
-            progressDiv.innerHTML = `
-                <div class="progress-bar">
-                    <div class="progress" style="width: ${progress}%"></div>
-                </div>
-                <span class="progress-text">上传进度: ${progress}%</span>
-            `;
-            
-            if (progress === 100) {
-                setTimeout(() => {
-                    progressDiv.remove();
-                }, 2000);
-            }
+            const messages = document.querySelectorAll('.upload-message');
+            messages.forEach(message => {
+                const progressBar = message.querySelector('.progress');
+                if (progressBar) {
+                    progressBar.style.width = `${progress}%`;
+                }
+            });
         }
 
         // 事件监听器

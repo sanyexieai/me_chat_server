@@ -871,6 +871,45 @@ async fn upload_file_chunk(
         
         let file_path = upload_dir.join(final_filename.clone());
 
+        // 检查本地文件是否已存在
+        if file_path.exists() {
+            // 文件已存在，直接保存到数据库
+            let file_size = file_path.metadata().map_err(|e| {
+                eprintln!("Failed to get file metadata: {}", e);
+                Status::InternalServerError
+            })?.len() as i64;
+            
+            let mime_type = mime_guess::from_path(&form.file_name).first_or_octet_stream();
+            
+            let db = state.db.clone();
+            let file_id = sqlx::query(
+                "INSERT INTO files (md5, file_name, file_size, file_path, mime_type, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(&form.file_id)
+            .bind(&form.file_name)
+            .bind(file_size)
+            .bind(&final_filename)
+            .bind(mime_type.to_string())
+            .bind(user.id)
+            .bind(chrono::Utc::now())
+            .execute(&db)
+            .await
+            .map_err(|e| {
+                eprintln!("Failed to save file info to database: {}", e);
+                Status::InternalServerError
+            })?
+            .last_insert_rowid();
+
+            println!("File already exists, saved to database: {}", file_path.display());
+
+            return Ok(Json(json!({
+                "success": true,
+                "file_url": format!("/files/{}", final_filename),
+                "file_id": file_id
+            })));
+        }
+
         // 创建临时文件
         let mut file = File::create(&file_path).map_err(|e| {
             eprintln!("Failed to create file: {}", e);
