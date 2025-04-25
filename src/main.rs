@@ -751,7 +751,7 @@ async fn upload_file_chunk(
     println!("收到文件分片上传请求");
     println!("文件名: {:?}", form.file_name);
     println!("文件 MD5: {:?}", form.md5);
-    println!("分片索引: {}/{}", form.chunk_index + 1, form.total_chunks);
+    println!("分片索引: {}/{}", form.chunk_index, form.total_chunks);
 
     // 如果是第一片，只检查文件是否存在
     if form.chunk_index == 0 {
@@ -853,25 +853,25 @@ async fn upload_file_chunk(
     let mut uploads = state.uploads.lock().await;
     let chunks = uploads.entry(form.md5.clone()).or_insert_with(Vec::new);
 
-    // 确保分片索引正确
-    while chunks.len() <= form.chunk_index {
+    // 确保分片索引正确（从1开始）
+    while chunks.len() < form.chunk_index - 1 {
         chunks.push(Vec::new());
     }
-    chunks[form.chunk_index] = chunk_data;
+    chunks.push(chunk_data);
 
-    // 检查是否所有分片都已上传
-    if chunks.len() == form.total_chunks && chunks.iter().all(|chunk| !chunk.is_empty()) {
-        // 生成最终文件名
-        let extension = Path::new(&form.file_name)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
-        let final_filename = if !extension.is_empty() {
-            format!("{}.{}", form.md5, extension)
-        } else {
-            form.md5.clone()
-        };
+    // 生成最终文件名
+    let extension = Path::new(&form.file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    let final_filename = if !extension.is_empty() {
+        format!("{}.{}", form.md5, extension)
+    } else {
+        form.md5.clone()
+    };
 
+    // 检查是否所有分片都已上传（不包括第一片）
+    if chunks.len() == form.total_chunks - 1 {
         let file_path = upload_dir.join(final_filename.clone());
 
         // 创建临时文件
@@ -936,10 +936,12 @@ async fn upload_file_chunk(
             "file_id": file_id
         })))
     } else {
-        // 返回上传进度
+        // 返回上传进度（不包括第一片）
         Ok(Json(json!({
             "success": true,
-            "progress": (chunks.len() as f64 / form.total_chunks as f64 * 100.0) as i32
+            "progress": ((chunks.len() as f64 / (form.total_chunks - 1) as f64) * 100.0) as i32,
+            "file_url": final_filename,
+            "file_id": 0
         })))
     }
 }

@@ -1047,7 +1047,7 @@
             formData.append('file_name', file.name);
             formData.append('md5', fileMd5);
             formData.append('chunk_index', 0);
-            formData.append('total_chunks', totalChunks);
+            formData.append('total_chunks', totalChunks + 1); // 总片数加1，因为第一片用于检查
             
             const firstResponse = await fetch('/api/upload_file_chunk', {
                 method: 'POST',
@@ -1066,8 +1066,8 @@
             }
             
             // 文件不存在，继续上传其他分片
-            for (let chunkIndex = 1; chunkIndex < totalChunks; chunkIndex++) {
-                const start = chunkIndex * chunkSize;
+            for (let chunkIndex = 1; chunkIndex < totalChunks + 1; chunkIndex++) {
+                const start = (chunkIndex - 1) * chunkSize; // 从索引0开始计算实际数据
                 const end = Math.min(start + chunkSize, file.size);
                 const chunk = file.slice(start, end);
                 
@@ -1076,7 +1076,7 @@
                 formData.append('file_name', file.name);
                 formData.append('md5', fileMd5);
                 formData.append('chunk_index', chunkIndex);
-                formData.append('total_chunks', totalChunks);
+                formData.append('total_chunks', totalChunks + 1);
                 
                 const response = await fetch('/api/upload_file_chunk', {
                     method: 'POST',
@@ -1084,15 +1084,15 @@
                 });
                 
                 if (!response.ok) {
-                    throw new Error(`上传分片 ${chunkIndex + 1}/${totalChunks} 失败`);
+                    throw new Error(`上传分片 ${chunkIndex}/${totalChunks + 1} 失败`);
                 }
                 
                 // 更新上传进度
-                const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+                const progress = Math.round((chunkIndex / (totalChunks + 1)) * 100);
                 updateUploadProgress(progress);
                 
                 // 如果是最后一片，获取文件信息
-                if (chunkIndex === totalChunks - 1) {
+                if (chunkIndex === totalChunks) {
                     const data = await response.json();
                     fileData = data;
                 }
