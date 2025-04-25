@@ -1,20 +1,21 @@
-#[macro_use]
 extern crate rocket;
 
 mod models;
 use models::*;
 
 use futures::stream::StreamExt;
+use hex;
 use include_dir::{include_dir, Dir};
 use md5::{Digest, Md5};
+use mime_guess;
 use rocket::form::{Form, FromForm};
-use rocket::fs::{FileServer, NamedFile, TempFile};
+use rocket::fs::{FileServer, TempFile};
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome};
 use rocket::response::content;
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::{
-    get, post, routes,
+    post, routes,
     tokio::select,
     tokio::sync::broadcast::{channel, Sender},
     Request, State,
@@ -23,16 +24,12 @@ use rocket_ws::{Message as WsMessage, WebSocket};
 use serde_json::{json, Value};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
-use std::fs;
-use std::path::Path;
-use uuid::Uuid;
-use std::sync::Mutex;
 use std::collections::HashMap;
-use std::io::Write;
+use std::fs;
 use std::fs::File;
-use mime_guess;
+use std::io::Write;
+use std::path::Path;
 use tokio::sync::Mutex as TokioMutex;
-use hex;
 
 // 文件上传状态结构体
 struct FileUploadState {
@@ -53,6 +50,7 @@ struct ChunkUpload<'r> {
 // 包含静态文件目录
 static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
 
+// 聊天状态结构体
 struct ChatState {
     tx: Sender<ChatMessage>,
     db: SqlitePool,
@@ -119,6 +117,18 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
     }
 }
 
+// 检查用户是否是群组成员
+async fn is_group_member(group_id: i64, user_id: i64, db: &SqlitePool) -> bool {
+    sqlx::query("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?")
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .unwrap()
+        .is_some()
+}
+
+// 初始化数据库
 async fn init_db() -> SqlitePool {
     // 获取当前工作目录
     let current_dir = std::env::current_dir().unwrap();
@@ -136,13 +146,13 @@ async fn init_db() -> SqlitePool {
         .idle_timeout(std::time::Duration::from_secs(30))
         .connect_with(options)
         .await
-        .expect("Failed to connect to database");
+        .expect("数据库连接失败");
 
     // 运行迁移
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .expect("Failed to run migrations");
+        .expect("数据库迁移失败");
 
     pool
 }
@@ -159,10 +169,7 @@ fn ws_handler(
     let current_username = user.username.clone();
     let db = state.db.clone();
 
-    println!(
-        "WebSocket connection established for user: {} (ID: {})",
-        current_username, current_user_id
-    );
+    println!("WebSocket 连接已建立，用户: {} (ID: {})", current_username, current_user_id);
 
     rocket_ws::Stream! { ws =>
         let mut ws = ws;
@@ -171,7 +178,7 @@ fn ws_handler(
                 message = ws.next() => {
                     match message {
                         Some(Ok(WsMessage::Text(text))) => {
-                            println!("Received message from {}: {}", current_username, text);
+                            println!("收到来自 {} 的消息: {}", current_username, text);
                             match serde_json::from_str::<SendMessage>(&text) {
                                 Ok(send_msg) => {
                                     // 验证目标用户或群组是否存在
@@ -280,15 +287,15 @@ fn ws_handler(
                             continue;
                         }
                         Some(Ok(WsMessage::Close(_))) => {
-                            println!("WebSocket connection closed for user: {}", current_username);
+                            println!("WebSocket 连接已关闭，用户: {}", current_username);
                             break;
                         }
                         Some(Err(e)) => {
-                            println!("WebSocket error for user {}: {}", current_username, e);
+                            println!("WebSocket 错误，用户 {}: {}", current_username, e);
                             break;
                         }
                         None => {
-                            println!("WebSocket connection ended for user: {}", current_username);
+                            println!("WebSocket 连接已结束，用户: {}", current_username);
                             break;
                         }
                     }
@@ -317,34 +324,27 @@ fn ws_handler(
     }
 }
 
-// 检查用户是否是群组成员
-async fn is_group_member(group_id: i64, user_id: i64, db: &SqlitePool) -> bool {
-    sqlx::query("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?")
-        .bind(group_id)
-        .bind(user_id)
-        .fetch_optional(db)
-        .await
-        .unwrap()
-        .is_some()
-}
-
 #[rocket::get("/")]
 fn index() -> content::RawHtml<&'static str> {
+    // 返回首页 HTML
     content::RawHtml(include_str!("../static/index.html"))
 }
 
 #[rocket::get("/login")]
 fn login_page() -> content::RawHtml<&'static str> {
+    // 返回登录页面 HTML
     content::RawHtml(include_str!("../static/login.html"))
 }
 
 #[rocket::get("/register")]
 fn register_page() -> content::RawHtml<&'static str> {
+    // 返回注册页面 HTML
     content::RawHtml(include_str!("../static/register.html"))
 }
 
 #[rocket::get("/static/<file..>")]
 fn static_files(file: std::path::PathBuf) -> Option<content::RawHtml<&'static str>> {
+    // 返回静态文件内容
     if let Some(file) = STATIC_DIR.get_file(file) {
         if let Some(content) = file.contents_utf8() {
             return Some(content::RawHtml(content));
@@ -359,10 +359,12 @@ async fn login(
     state: &State<ChatState>,
     cookies: &rocket::http::CookieJar<'_>,
 ) -> rocket::serde::json::Json<AuthResponse> {
+    // 计算密码哈希
     let mut hasher = Md5::new();
     hasher.update(request.password.as_bytes());
     let password_hash = hex::encode(hasher.finalize());
 
+    // 验证用户登录
     match sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ? AND password = ?")
         .bind(&request.username)
         .bind(&password_hash)
@@ -371,19 +373,20 @@ async fn login(
         .unwrap()
     {
         Some(_) => {
+            // 登录成功，设置 cookie
             cookies.add_private(rocket::http::Cookie::new(
                 "username",
                 request.username.clone(),
             ));
             rocket::serde::json::Json(AuthResponse {
                 success: true,
-                message: "Login successful".to_string(),
+                message: "登录成功".to_string(),
                 token: Some(request.username.clone()),
             })
         }
         None => rocket::serde::json::Json(AuthResponse {
             success: false,
-            message: "Invalid username or password".to_string(),
+            message: "用户名或密码错误".to_string(),
             token: None,
         }),
     }
@@ -395,10 +398,12 @@ async fn register(
     state: &State<ChatState>,
     cookies: &rocket::http::CookieJar<'_>,
 ) -> rocket::serde::json::Json<AuthResponse> {
+    // 计算密码哈希
     let mut hasher = Md5::new();
     hasher.update(request.password.as_bytes());
     let password_hash = hex::encode(hasher.finalize());
 
+    // 注册新用户
     match sqlx::query("INSERT INTO users (username, password) VALUES (?, ?)")
         .bind(&request.username)
         .bind(&password_hash)
@@ -406,19 +411,20 @@ async fn register(
         .await
     {
         Ok(_) => {
+            // 注册成功，设置 cookie
             cookies.add_private(rocket::http::Cookie::new(
                 "username",
                 request.username.clone(),
             ));
             rocket::serde::json::Json(AuthResponse {
                 success: true,
-                message: "Registration successful".to_string(),
+                message: "注册成功".to_string(),
                 token: Some(request.username.clone()),
             })
         }
         Err(_) => rocket::serde::json::Json(AuthResponse {
             success: false,
-            message: "Username already exists".to_string(),
+            message: "用户名已存在".to_string(),
             token: None,
         }),
     }
@@ -430,12 +436,14 @@ async fn add_friend(
     state: &State<ChatState>,
     user: AuthenticatedUser,
 ) -> rocket::serde::json::Json<AuthResponse> {
+    // 获取当前用户信息
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&user.username)
         .fetch_one(&state.db)
         .await
         .unwrap();
 
+    // 获取好友用户信息
     let friend = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&request.friend_username)
         .fetch_optional(&state.db)
@@ -459,7 +467,7 @@ async fn add_friend(
             if existing.is_some() {
                 return rocket::serde::json::Json(AuthResponse {
                     success: false,
-                    message: "Already friends".to_string(),
+                    message: "已经是好友".to_string(),
                     token: None,
                 });
             }
@@ -474,13 +482,13 @@ async fn add_friend(
 
             rocket::serde::json::Json(AuthResponse {
                 success: true,
-                message: "Friend added successfully".to_string(),
+                message: "添加好友成功".to_string(),
                 token: None,
             })
         }
         None => rocket::serde::json::Json(AuthResponse {
             success: false,
-            message: "User not found".to_string(),
+            message: "用户不存在".to_string(),
             token: None,
         }),
     }
@@ -492,6 +500,7 @@ async fn create_group(
     state: &State<ChatState>,
     user: AuthenticatedUser,
 ) -> rocket::serde::json::Json<AuthResponse> {
+    // 获取当前用户信息
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&user.username)
         .fetch_one(&state.db)
@@ -533,7 +542,7 @@ async fn create_group(
 
     rocket::serde::json::Json(AuthResponse {
         success: true,
-        message: format!("Group created successfully with ID: {}", group_id),
+        message: format!("群组创建成功，ID: {}", group_id),
         token: None,
     })
 }
@@ -732,23 +741,22 @@ async fn get_current_user(
     rocket::serde::json::Json(user)
 }
 
-
 #[post("/api/upload_file_chunk", data = "<form>")]
 async fn upload_file_chunk(
     mut form: Form<ChunkUpload<'_>>,
     state: &State<FileUploadState>,
     user: AuthenticatedUser,
 ) -> Result<Json<Value>, Status> {
-    println!("Received file chunk upload request");
-    println!("File name: {:?}", form.file_name);
-    println!("File md5: {:?}", form.md5);
-    println!("Chunk index: {}/{}", form.chunk_index + 1, form.total_chunks);
+    println!("收到文件分片上传请求");
+    println!("文件名: {:?}", form.file_name);
+    println!("文件 MD5: {:?}", form.md5);
+    println!("分片索引: {}/{}", form.chunk_index + 1, form.total_chunks);
 
     // 创建上传目录
     let upload_dir = Path::new("uploads");
     if !upload_dir.exists() {
         if let Err(e) = fs::create_dir_all(upload_dir) {
-            eprintln!("Failed to create uploads directory: {}", e);
+            eprintln!("创建上传目录失败: {}", e);
             return Err(Status::InternalServerError);
         }
     }
@@ -756,11 +764,11 @@ async fn upload_file_chunk(
     // 读取分片数据
     let temp_path = upload_dir.join(format!("temp_{}", form.md5));
     if let Err(e) = form.file.copy_to(&temp_path).await {
-        eprintln!("Failed to read chunk data: {}", e);
+        eprintln!("读取分片数据失败: {}", e);
         return Err(Status::InternalServerError);
     }
     let chunk_data = fs::read(&temp_path).map_err(|e| {
-        eprintln!("Failed to read temp file: {}", e);
+        eprintln!("读取临时文件失败: {}", e);
         Status::InternalServerError
     })?;
     fs::remove_file(&temp_path).ok(); // 清理临时文件
@@ -768,7 +776,7 @@ async fn upload_file_chunk(
     // 将分片数据存储到状态中
     let mut uploads = state.uploads.lock().await;
     let chunks = uploads.entry(form.md5.clone()).or_insert_with(Vec::new);
-    
+
     // 确保分片索引正确
     while chunks.len() <= form.chunk_index {
         chunks.push(Vec::new());
@@ -781,7 +789,7 @@ async fn upload_file_chunk(
         let upload_dir = Path::new("uploads");
         if !upload_dir.exists() {
             if let Err(e) = fs::create_dir_all(upload_dir) {
-                eprintln!("Failed to create uploads directory: {}", e);
+                eprintln!("创建上传目录失败: {}", e);
                 return Err(Status::InternalServerError);
             }
         }
@@ -796,19 +804,22 @@ async fn upload_file_chunk(
         } else {
             form.md5.clone()
         };
-        
+
         let file_path = upload_dir.join(final_filename.clone());
 
         // 检查本地文件是否已存在
         if file_path.exists() {
             // 文件已存在，直接保存到数据库
-            let file_size = file_path.metadata().map_err(|e| {
-                eprintln!("Failed to get file metadata: {}", e);
-                Status::InternalServerError
-            })?.len() as i64;
-            
+            let file_size = file_path
+                .metadata()
+                .map_err(|e| {
+                    eprintln!("获取文件元数据失败: {}", e);
+                    Status::InternalServerError
+                })?
+                .len() as i64;
+
             let mime_type = mime_guess::from_path(&form.file_name).first_or_octet_stream();
-            
+
             let db = state.db.clone();
             let file_id = sqlx::query(
                 "INSERT INTO files (md5, file_name, file_size, file_path, mime_type, created_by, created_at)
@@ -824,12 +835,12 @@ async fn upload_file_chunk(
             .execute(&db)
             .await
             .map_err(|e| {
-                eprintln!("Failed to save file info to database: {}", e);
+                eprintln!("保存文件信息到数据库失败: {}", e);
                 Status::InternalServerError
             })?
             .last_insert_rowid();
 
-            println!("File already exists, saved to database: {}", file_path.display());
+            println!("文件已存在，已保存到数据库: {}", file_path.display());
 
             return Ok(Json(json!({
                 "success": true,
@@ -840,7 +851,7 @@ async fn upload_file_chunk(
 
         // 创建临时文件
         let mut file = File::create(&file_path).map_err(|e| {
-            eprintln!("Failed to create file: {}", e);
+            eprintln!("创建文件失败: {}", e);
             Status::InternalServerError
         })?;
 
@@ -848,7 +859,7 @@ async fn upload_file_chunk(
         let mut hasher = Md5::new();
         for chunk in chunks.iter() {
             if let Err(e) = file.write_all(chunk) {
-                eprintln!("Failed to write chunk: {}", e);
+                eprintln!("写入分片失败: {}", e);
                 return Err(Status::InternalServerError);
             }
             hasher.update(chunk);
@@ -857,7 +868,7 @@ async fn upload_file_chunk(
 
         // 验证文件 MD5
         if file_md5 != form.md5 {
-            eprintln!("File MD5 mismatch: expected {}, got {}", form.md5, file_md5);
+            eprintln!("文件 MD5 不匹配: 期望 {}, 实际 {}", form.md5, file_md5);
             return Err(Status::BadRequest);
         }
 
@@ -867,7 +878,7 @@ async fn upload_file_chunk(
             file_size += chunk.len() as i64;
         }
         let mime_type = mime_guess::from_path(&form.file_name).first_or_octet_stream();
-        
+
         let db = state.db.clone();
         let file_id = sqlx::query(
             "INSERT INTO files (md5, file_name, file_size, file_path, mime_type, created_by, created_at)
@@ -883,7 +894,7 @@ async fn upload_file_chunk(
         .execute(&db)
         .await
         .map_err(|e| {
-            eprintln!("Failed to save file info to database: {}", e);
+            eprintln!("保存文件信息到数据库失败: {}", e);
             Status::InternalServerError
         })?
         .last_insert_rowid();
@@ -891,7 +902,7 @@ async fn upload_file_chunk(
         // 清理上传状态
         uploads.remove(&form.md5);
 
-        println!("File saved successfully: {}", file_path.display());
+        println!("文件保存成功: {}", file_path.display());
 
         // 返回文件URL
         Ok(Json(json!({
@@ -939,12 +950,12 @@ async fn main() {
         db: db.clone(),
     };
 
-    println!("🚀 Chat Server is starting...");
-    println!("🌐 Server running at: http://localhost:{}", port);
-    println!("📝 API Endpoints:");
-    println!("   - Login:    POST http://localhost:{}/api/login", port);
-    println!("   - Register: POST http://localhost:{}/api/register", port);
-    println!("📱 Web Interface: http://localhost:{}", port);
+    println!("🚀 聊天服务器正在启动...");
+    println!("🌐 服务器运行在: http://localhost:{}", port);
+    println!("📝 API 端点:");
+    println!("   - 登录:    POST http://localhost:{}/api/login", port);
+    println!("   - 注册: POST http://localhost:{}/api/register", port);
+    println!("📱 网页界面: http://localhost:{}", port);
 
     let config = rocket::Config::figment()
         .merge(("port", port))
