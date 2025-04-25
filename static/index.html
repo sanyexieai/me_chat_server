@@ -1040,7 +1040,33 @@
             // 生成文件 MD5
             const fileMd5 = await generateFileMd5(file);
             
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            // 先发送第一片检查文件是否存在
+            const firstChunk = file.slice(0, 0); // 第一片不发送实际数据
+            const formData = new FormData();
+            formData.append('file', firstChunk);
+            formData.append('file_name', file.name);
+            formData.append('md5', fileMd5);
+            formData.append('chunk_index', 0);
+            formData.append('total_chunks', totalChunks);
+            
+            const firstResponse = await fetch('/api/upload_file_chunk', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!firstResponse.ok) {
+                throw new Error('检查文件失败');
+            }
+            
+            const firstData = await firstResponse.json();
+            
+            // 如果文件已存在，直接返回文件信息
+            if (firstData.skip_upload) {
+                return firstData;
+            }
+            
+            // 文件不存在，继续上传其他分片
+            for (let chunkIndex = 1; chunkIndex < totalChunks; chunkIndex++) {
                 const start = chunkIndex * chunkSize;
                 const end = Math.min(start + chunkSize, file.size);
                 const chunk = file.slice(start, end);
@@ -1056,18 +1082,20 @@
                     method: 'POST',
                     body: formData
                 });
+                
                 if (!response.ok) {
                     throw new Error(`上传分片 ${chunkIndex + 1}/${totalChunks} 失败`);
-                }
-                //全部上传完成后，获取文件ID    
-                if (chunkIndex === totalChunks - 1) {
-                    const data = await response.json();
-                    fileData = data;
                 }
                 
                 // 更新上传进度
                 const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
                 updateUploadProgress(progress);
+                
+                // 如果是最后一片，获取文件信息
+                if (chunkIndex === totalChunks - 1) {
+                    const data = await response.json();
+                    fileData = data;
+                }
             }
             
             return fileData;

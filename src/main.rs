@@ -752,39 +752,8 @@ async fn upload_file_chunk(
     println!("文件 MD5: {:?}", form.md5);
     println!("分片索引: {}/{}", form.chunk_index + 1, form.total_chunks);
 
-    // 创建上传目录
-    let upload_dir = Path::new("uploads");
-    if !upload_dir.exists() {
-        if let Err(e) = fs::create_dir_all(upload_dir) {
-            eprintln!("创建上传目录失败: {}", e);
-            return Err(Status::InternalServerError);
-        }
-    }
-
-    // 读取分片数据
-    let temp_path = upload_dir.join(format!("temp_{}", form.md5));
-    if let Err(e) = form.file.copy_to(&temp_path).await {
-        eprintln!("读取分片数据失败: {}", e);
-        return Err(Status::InternalServerError);
-    }
-    let chunk_data = fs::read(&temp_path).map_err(|e| {
-        eprintln!("读取临时文件失败: {}", e);
-        Status::InternalServerError
-    })?;
-    fs::remove_file(&temp_path).ok(); // 清理临时文件
-
-    // 将分片数据存储到状态中
-    let mut uploads = state.uploads.lock().await;
-    let chunks = uploads.entry(form.md5.clone()).or_insert_with(Vec::new);
-
-    // 确保分片索引正确
-    while chunks.len() <= form.chunk_index {
-        chunks.push(Vec::new());
-    }
-    chunks[form.chunk_index] = chunk_data;
-
-    // 检查是否所有分片都已上传
-    if chunks.len() == form.total_chunks && chunks.iter().all(|chunk| !chunk.is_empty()) {
+    // 如果是第一片，只检查文件是否存在
+    if form.chunk_index == 0 {
         // 创建上传目录
         let upload_dir = Path::new("uploads");
         if !upload_dir.exists() {
@@ -845,9 +814,64 @@ async fn upload_file_chunk(
             return Ok(Json(json!({
                 "success": true,
                 "file_url": final_filename,
-                "file_id": file_id
+                "file_id": file_id,
+                "skip_upload": true
             })));
         }
+
+        // 文件不存在，返回继续上传
+        return Ok(Json(json!({
+            "success": true,
+            "skip_upload": false
+        })));
+    }
+
+    // 如果不是第一片，按正常流程处理
+    // 创建上传目录
+    let upload_dir = Path::new("uploads");
+    if !upload_dir.exists() {
+        if let Err(e) = fs::create_dir_all(upload_dir) {
+            eprintln!("创建上传目录失败: {}", e);
+            return Err(Status::InternalServerError);
+        }
+    }
+
+    // 读取分片数据
+    let temp_path = upload_dir.join(format!("temp_{}", form.md5));
+    if let Err(e) = form.file.copy_to(&temp_path).await {
+        eprintln!("读取分片数据失败: {}", e);
+        return Err(Status::InternalServerError);
+    }
+    let chunk_data = fs::read(&temp_path).map_err(|e| {
+        eprintln!("读取临时文件失败: {}", e);
+        Status::InternalServerError
+    })?;
+    fs::remove_file(&temp_path).ok(); // 清理临时文件
+
+    // 将分片数据存储到状态中
+    let mut uploads = state.uploads.lock().await;
+    let chunks = uploads.entry(form.md5.clone()).or_insert_with(Vec::new);
+
+    // 确保分片索引正确
+    while chunks.len() <= form.chunk_index {
+        chunks.push(Vec::new());
+    }
+    chunks[form.chunk_index] = chunk_data;
+
+    // 检查是否所有分片都已上传
+    if chunks.len() == form.total_chunks && chunks.iter().all(|chunk| !chunk.is_empty()) {
+        // 生成最终文件名
+        let extension = Path::new(&form.file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+        let final_filename = if !extension.is_empty() {
+            format!("{}.{}", form.md5, extension)
+        } else {
+            form.md5.clone()
+        };
+
+        let file_path = upload_dir.join(final_filename.clone());
 
         // 创建临时文件
         let mut file = File::create(&file_path).map_err(|e| {
