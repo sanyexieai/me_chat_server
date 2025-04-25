@@ -64,6 +64,12 @@ struct ChatMessage {
     direction: String,
     sender_id: i64,
     receiver_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_size: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +82,12 @@ struct SendMessage {
     direction: String,
     sender_id: i64,
     receiver_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_size: Option<i64>,
 }
 
 fn default_message_type() -> String {
@@ -209,11 +221,32 @@ fn ws_handler(
                                             direction: "receive".to_string(),
                                             sender_id: current_user_id,
                                             receiver_id: current_user_id,
+                                            file_path: None,
+                                            file_name: None,
+                                            file_size: None,
                                         };
                                         if let Ok(response) = serde_json::to_string(&error_msg) {
                                             yield WsMessage::Text(response);
                                         }
                                         continue;
+                                    }
+
+                                    // 如果是文件消息，获取文件信息
+                                    let mut file_path = None;
+                                    let mut file_name = None;
+                                    let mut file_size = None;
+                                    
+                                    if send_msg.message_type == "file" {
+                                        if let Ok(row) = sqlx::query(
+                                            "SELECT file_path, file_name, file_size FROM files WHERE id = ?"
+                                        )
+                                        .bind(&send_msg.content)
+                                        .fetch_one(&db)
+                                        .await {
+                                            file_path = row.get("file_path");
+                                            file_name = row.get("file_name");
+                                            file_size = row.get("file_size");
+                                        }
                                     }
 
                                     let chat_msg = ChatMessage {
@@ -225,6 +258,9 @@ fn ws_handler(
                                         direction: "send".to_string(),
                                         sender_id: current_user_id,
                                         receiver_id: send_msg.receiver_id,
+                                        file_path,
+                                        file_name,
+                                        file_size,
                                     };
 
                                     // 保存消息到数据库
@@ -264,6 +300,9 @@ fn ws_handler(
                                         direction: "receive".to_string(),
                                         sender_id: current_user_id,
                                         receiver_id: current_user_id,
+                                        file_path: None,
+                                        file_name: None,
+                                        file_size: None,
                                     };
                                     if let Ok(response) = serde_json::to_string(&error_msg) {
                                         yield WsMessage::Text(response);
@@ -946,6 +985,29 @@ async fn upload_file_chunk(
     }
 }
 
+#[rocket::get("/files/<file_id>")]
+async fn get_file_info(
+    state: &State<ChatState>,
+    file_id: i64,
+) -> Result<Json<Value>, Status> {
+    match sqlx::query(
+        "SELECT file_path, file_name, file_size FROM files WHERE id = ?"
+    )
+    .bind(file_id)
+    .fetch_one(&state.db)
+    .await {
+        Ok(row) => {
+            let file_info = json!({
+                "file_path": row.get::<String, _>("file_path"),
+                "file_name": row.get::<String, _>("file_name"),
+                "file_size": row.get::<i64, _>("file_size")
+            });
+            Ok(Json(file_info))
+        },
+        Err(_) => Err(Status::NotFound)
+    }
+}
+
 #[rocket::main]
 async fn main() {
     // 初始化日志
@@ -1015,7 +1077,8 @@ async fn main() {
                 get_groups,
                 get_messages,
                 get_group_messages,
-                get_current_user
+                get_current_user,
+                get_file_info,
             ],
         )
         .mount("/", FileServer::from("uploads"))

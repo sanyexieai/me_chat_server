@@ -69,3 +69,5 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- 插入默认用户 (用户名: sanye, 密码: 123456 的MD5哈希)
 INSERT INTO users (username, password) VALUES ('sanye', 'e10adc3949ba59abbe56e057f20f883e'); 
+INSERT INTO users (username, password) VALUES ('zhangtai', 'e10adc3949ba59abbe56e057f20f883e'); 
+INSERT INTO "main"."friendships" ("id", "user_id", "friend_id", "created_at") VALUES (1, 2, 1, '2025-04-25 08:22:18');

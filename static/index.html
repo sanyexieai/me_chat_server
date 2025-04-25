@@ -763,7 +763,35 @@
                 const message = JSON.parse(event.data);
                 // 添加接收标识
                 message.direction = "receive";
-                appendMessage(message);
+                
+                // 如果是文件消息，需要获取文件信息
+                if (message.message_type === 'file') {
+                    // 从数据库获取文件信息
+                    fetch(`/api/files/${message.content}`)
+                        .then(response => response.json())
+                        .then(fileInfo => {
+                            // 更新消息中的文件信息
+                            message.file_path = fileInfo.file_path;
+                            message.file_name = fileInfo.file_name;
+                            message.file_size = fileInfo.file_size;
+                            // 添加消息到聊天
+                            appendMessage(message);
+                        })
+                        .catch(error => {
+                            console.error('获取文件信息失败:', error);
+                            // 显示错误消息
+                            const errorMessage = {
+                                ...message,
+                                content: '获取文件信息失败',
+                                message_type: 'error',
+                                timestamp: Math.floor(Date.now() / 1000)
+                            };
+                            appendMessage(errorMessage);
+                        });
+                } else {
+                    // 非文件消息直接添加
+                    appendMessage(message);
+                }
             };
 
             ws.onopen = () => {
@@ -948,25 +976,24 @@
                     uploadMessageId = getCurrentChatMessages().length - 1;
 
                     // 分片上传
-                    const CHUNK_SIZE = 1 * 1024 * 1024; // 10MB
+                    const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB
                     const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
                     const fileData = await uploadFileChunks(selectedFile, CHUNK_SIZE, totalChunks);
                     
                     if (fileData) {
-                        message = {
+                        // 发送文件消息
+                        const fileMessage = {
                             ...message,
                             content: fileData.file_id.toString(),
                             file_path: fileData.file_url,
                             file_name: selectedFile.name,
-                            file_size: selectedFile.size
+                            file_size: selectedFile.size,
+                            timestamp: Math.floor(Date.now() / 1000)
                         };
                         
                         if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify(message));
-                            appendMessage({
-                                ...message,
-                                timestamp: Math.floor(Date.now() / 1000)
-                            });
+                            ws.send(JSON.stringify(fileMessage));
+                            appendMessage(fileMessage);
                             
                             // 移除上传中的消息
                             if (uploadMessageId !== null) {
@@ -1005,11 +1032,9 @@
                 }
             } else {
                 if (ws && ws.readyState === WebSocket.OPEN) {
+                    message.timestamp = Math.floor(Date.now() / 1000);
                     ws.send(JSON.stringify(message));
-                    appendMessage({
-                        ...message,
-                        timestamp: Math.floor(Date.now() / 1000)
-                    });
+                    appendMessage(message);
                     messageInput.value = '';
                 }
             }
