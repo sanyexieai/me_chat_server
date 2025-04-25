@@ -405,6 +405,74 @@
                 max-width: 90%;
             }
         }
+
+        .file-message {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .image-preview {
+            max-width: 300px;
+            max-height: 300px;
+            overflow: hidden;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .preview-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+
+        .preview-image:hover {
+            transform: scale(1.02);
+        }
+
+        .file-link {
+            color: var(--text-color);
+            text-decoration: none;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .file-link:hover {
+            text-decoration: underline;
+        }
+
+        .upload-progress {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: var(--message-bg);
+            border-radius: 8px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress {
+            height: 100%;
+            background-color: var(--primary-color);
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            display: block;
+            margin-top: 5px;
+            font-size: 0.9rem;
+            color: var(--text-color);
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -717,13 +785,33 @@
 
                 let contentHtml = '';
                 if (message.message_type === 'file') {
-                    contentHtml = `
-                        <div class="file-message">
-                            <a href="${message.content}" target="_blank" class="file-link">
-                                📎 ${message.file_name || '文件'} (${formatFileSize(message.file_size)})
-                            </a>
-                        </div>
-                    `;
+                    const fileUrl = message.content;
+                    const fileName = message.file_name || '文件';
+                    const fileSize = formatFileSize(message.file_size);
+                    
+                    // 检查是否是图片文件
+                    const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
+                    
+                    if (isImage) {
+                        contentHtml = `
+                            <div class="file-message">
+                                <div class="image-preview">
+                                    <img src="${fileUrl}" alt="${fileName}" class="preview-image">
+                                </div>
+                                <a href="${fileUrl}" target="_blank" class="file-link">
+                                    📎 ${fileName} (${fileSize})
+                                </a>
+                            </div>
+                        `;
+                    } else {
+                        contentHtml = `
+                            <div class="file-message">
+                                <a href="${fileUrl}" target="_blank" class="file-link">
+                                    📎 ${fileName} (${fileSize})
+                                </a>
+                            </div>
+                        `;
+                    }
                 } else {
                     contentHtml = `<span class="content">${message.content}</span>`;
                 }
@@ -822,21 +910,17 @@
             };
 
             if (selectedFile) {
-                // 创建FormData对象
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                formData.append('file_name', selectedFile.name);
                 try {
-                    const response = await fetch('/api/upload_file', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (response.ok) {
-                        const result = await response.json();
+                    // 分片上传
+                    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+                    const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+                    const fileId = await uploadFileChunks(selectedFile, CHUNK_SIZE, totalChunks);
+                    
+                    if (fileId) {
                         message = {
                             ...message,
-                            content: result.file_url,
+                            content: `/files/${fileId}`,
+                            file_uuid: fileId,
                             file_name: selectedFile.name,
                             file_size: selectedFile.size
                         };
@@ -850,8 +934,6 @@
                             messageInput.value = '';
                             removeSelectedFile();
                         }
-                    } else {
-                        alert('文件上传失败');
                     }
                 } catch (error) {
                     console.error('Error uploading file:', error);
@@ -866,6 +948,75 @@
                     });
                     messageInput.value = '';
                 }
+            }
+        }
+
+        // 添加分片上传函数
+        async function uploadFileChunks(file, chunkSize, totalChunks) {
+            // 使用文件名、大小和时间戳生成 SHA-256
+            const fileId = await generateFileId(file);
+            
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                const start = chunkIndex * chunkSize;
+                const end = Math.min(start + chunkSize, file.size);
+                const chunk = file.slice(start, end);
+                
+                const formData = new FormData();
+                formData.append('file', chunk);
+                formData.append('file_name', file.name);
+                formData.append('file_id', fileId);
+                formData.append('chunk_index', chunkIndex);
+                formData.append('total_chunks', totalChunks);
+                
+                const response = await fetch('/api/upload_file_chunk', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`上传分片 ${chunkIndex + 1}/${totalChunks} 失败`);
+                }
+                
+                // 更新上传进度
+                const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+                updateUploadProgress(progress);
+            }
+            
+            return fileId;
+        }
+
+        // 添加生成文件 ID 的函数
+        async function generateFileId(file) {
+            const timestamp = Date.now();
+            const data = `${file.name}_${file.size}_${timestamp}`;
+            const msgBuffer = new TextEncoder().encode(data);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return hashHex;
+        }
+
+        // 添加上传进度显示函数
+        function updateUploadProgress(progress) {
+            let progressDiv = document.querySelector('.upload-progress');
+            if (!progressDiv) {
+                progressDiv = document.createElement('div');
+                progressDiv.className = 'upload-progress';
+                const inputContainer = document.querySelector('.input-container');
+                inputContainer.parentNode.insertBefore(progressDiv, inputContainer);
+            }
+            
+            progressDiv.innerHTML = `
+                <div class="progress-bar">
+                    <div class="progress" style="width: ${progress}%"></div>
+                </div>
+                <span class="progress-text">上传进度: ${progress}%</span>
+            `;
+            
+            if (progress === 100) {
+                setTimeout(() => {
+                    progressDiv.remove();
+                }, 2000);
             }
         }
 

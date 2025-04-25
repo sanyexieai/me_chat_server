@@ -40,6 +40,19 @@ CREATE TABLE IF NOT EXISTS group_members (
     UNIQUE(group_id, user_id)
 );
 
+-- 创建文件表
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT NOT NULL UNIQUE,
+    file_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    mime_type TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER NOT NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
 -- 创建消息表
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,8 +61,13 @@ CREATE TABLE IF NOT EXISTS messages (
     group_id INTEGER,
     content TEXT NOT NULL,
     message_type TEXT NOT NULL DEFAULT 'text',
+    file_uuid TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sender_id) REFERENCES users(id),
     FOREIGN KEY (receiver_id) REFERENCES users(id),
-    FOREIGN KEY (group_id) REFERENCES groups(id)
-); 
+    FOREIGN KEY (group_id) REFERENCES groups(id),
+    FOREIGN KEY (file_uuid) REFERENCES files(uuid)
+);
+
+-- 插入默认用户 (用户名: sanye, 密码: 123456 的MD5哈希)
+INSERT INTO users (username, password) VALUES ('sanye', 'e10adc3949ba59abbe56e057f20f883e'); 

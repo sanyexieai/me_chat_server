@@ -23,6 +23,25 @@ use sqlx::Row;
 use std::fs;
 use std::path::Path;
 use uuid::Uuid;
+use std::sync::Mutex;
+use std::collections::HashMap;
+use std::io::Write;
+use std::fs::File;
+
+// 文件上传状态结构体
+struct FileUploadState {
+    uploads: Mutex<HashMap<String, Vec<Vec<u8>>>>,
+}
+
+// 分片上传请求结构体
+#[derive(FromForm)]
+struct ChunkUpload<'r> {
+    file: TempFile<'r>,
+    file_name: String,
+    file_id: String,
+    chunk_index: usize,
+    total_chunks: usize,
+}
 
 // 包含静态文件目录
 static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
@@ -576,16 +595,6 @@ struct Group {
     created_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-struct DbMessage {
-    id: i64,
-    sender_id: i64,
-    receiver_id: Option<i64>,
-    group_id: Option<i64>,
-    content: String,
-    created_at: chrono::NaiveDateTime,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MessageResponse {
     id: i64,
@@ -650,7 +659,7 @@ async fn get_group_messages(
     state: &State<ChatState>,
     user: AuthenticatedUser,
     group_id: i64,
-) -> rocket::serde::json::Json<Vec<DbMessage>> {
+) -> rocket::serde::json::Json<Vec<MessageResponse>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&user.username)
         .fetch_one(&state.db)
@@ -662,15 +671,31 @@ async fn get_group_messages(
         return rocket::serde::json::Json(Vec::new());
     }
 
-    let messages = sqlx::query_as::<_, DbMessage>(
-        "SELECT * FROM messages 
-        WHERE group_id = ?
-        ORDER BY created_at ASC",
+    let messages = sqlx::query(
+        "SELECT m.id, m.sender_id, m.receiver_id, m.group_id, m.content, m.created_at, 
+        'history' as direction,
+        u.username 
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.group_id = ?
+        ORDER BY m.created_at ASC",
     )
     .bind(group_id)
     .fetch_all(&state.db)
     .await
-    .unwrap();
+    .unwrap()
+    .iter()
+    .map(|row| MessageResponse {
+        id: row.get("id"),
+        sender_id: row.get("sender_id"),
+        receiver_id: row.get("receiver_id"),
+        group_id: row.get("group_id"),
+        content: row.get("content"),
+        timestamp: row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").timestamp(),
+        direction: row.get("direction"),
+        username: row.get("username"),
+    })
+    .collect();
 
     rocket::serde::json::Json(messages)
 }
@@ -773,6 +798,11 @@ async fn main() {
         db: db.clone(), // 克隆数据库连接池
     };
 
+    // 创建文件上传状态
+    let file_upload_state = FileUploadState {
+        uploads: Mutex::new(HashMap::new()),
+    };
+
     println!("🚀 Chat Server is starting...");
     println!("🌐 Server running at: http://localhost:{}", port);
     println!("📝 API Endpoints:");
@@ -788,6 +818,7 @@ async fn main() {
     let _ = rocket::build()
         .manage(state)
         .manage(db)
+        .manage(file_upload_state)
         .mount(
             "/",
             routes![
@@ -796,7 +827,7 @@ async fn main() {
                 register_page,
                 static_files,
                 ws_handler,
-                upload_file,
+                upload_file_chunk,
                 get_file
             ],
         )
@@ -818,4 +849,102 @@ async fn main() {
         .configure(config)
         .launch()
         .await;
+}
+
+#[post("/api/upload_file_chunk", data = "<form>")]
+async fn upload_file_chunk(
+    mut form: Form<ChunkUpload<'_>>,
+    state: &State<FileUploadState>,
+) -> Result<Json<Value>, Status> {
+    println!("Received file chunk upload request");
+    println!("File name: {:?}", form.file_name);
+    println!("File ID: {:?}", form.file_id);
+    println!("Chunk index: {}/{}", form.chunk_index + 1, form.total_chunks);
+
+    // 创建上传目录
+    let upload_dir = Path::new("uploads");
+    if !upload_dir.exists() {
+        if let Err(e) = fs::create_dir_all(upload_dir) {
+            eprintln!("Failed to create uploads directory: {}", e);
+            return Err(Status::InternalServerError);
+        }
+    }
+
+    // 读取分片数据
+    let temp_path = upload_dir.join(format!("temp_{}", form.file_id));
+    if let Err(e) = form.file.copy_to(&temp_path).await {
+        eprintln!("Failed to read chunk data: {}", e);
+        return Err(Status::InternalServerError);
+    }
+    let chunk_data = fs::read(&temp_path).map_err(|e| {
+        eprintln!("Failed to read temp file: {}", e);
+        Status::InternalServerError
+    })?;
+    fs::remove_file(&temp_path).ok(); // 清理临时文件
+
+    // 将分片数据存储到状态中
+    let mut uploads = state.uploads.lock().unwrap();
+    let chunks = uploads.entry(form.file_id.clone()).or_insert_with(Vec::new);
+    
+    // 确保分片索引正确
+    while chunks.len() <= form.chunk_index {
+        chunks.push(Vec::new());
+    }
+    chunks[form.chunk_index] = chunk_data;
+
+    // 检查是否所有分片都已上传
+    if chunks.len() == form.total_chunks && chunks.iter().all(|chunk| !chunk.is_empty()) {
+        // 创建上传目录
+        let upload_dir = Path::new("uploads");
+        if !upload_dir.exists() {
+            if let Err(e) = fs::create_dir_all(upload_dir) {
+                eprintln!("Failed to create uploads directory: {}", e);
+                return Err(Status::InternalServerError);
+            }
+        }
+
+        // 生成最终文件名
+        let extension = Path::new(&form.file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+        let final_filename = if !extension.is_empty() {
+            format!("{}.{}", form.file_id, extension)
+        } else {
+            form.file_id.clone()
+        };
+        
+        let file_path = upload_dir.join(final_filename.clone());
+
+        // 创建临时文件
+        let mut file = File::create(&file_path).map_err(|e| {
+            eprintln!("Failed to create file: {}", e);
+            Status::InternalServerError
+        })?;
+
+        // 合并所有分片
+        for chunk in chunks.iter() {
+            if let Err(e) = file.write_all(chunk) {
+                eprintln!("Failed to write chunk: {}", e);
+                return Err(Status::InternalServerError);
+            }
+        }
+
+        // 清理上传状态
+        uploads.remove(&form.file_id);
+
+        println!("File saved successfully: {}", file_path.display());
+
+        // 返回文件URL
+        Ok(Json(json!({
+            "success": true,
+            "file_url": format!("/files/{}", final_filename)
+        })))
+    } else {
+        // 返回上传进度
+        Ok(Json(json!({
+            "success": true,
+            "progress": (chunks.len() as f64 / form.total_chunks as f64 * 100.0) as i32
+        })))
+    }
 }
