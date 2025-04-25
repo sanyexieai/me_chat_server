@@ -948,7 +948,7 @@
                     uploadMessageId = getCurrentChatMessages().length - 1;
 
                     // 分片上传
-                    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+                    const CHUNK_SIZE = 1 * 1024 * 1024; // 10MB
                     const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
                     const fileData = await uploadFileChunks(selectedFile, CHUNK_SIZE, totalChunks);
                     
