@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS group_members (
 -- 创建文件表
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT NOT NULL UNIQUE,
+    md5 TEXT NOT NULL ,
     file_name TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     file_path TEXT NOT NULL,
@@ -61,12 +61,10 @@ CREATE TABLE IF NOT EXISTS messages (
     group_id INTEGER,
     content TEXT NOT NULL,
     message_type TEXT NOT NULL DEFAULT 'text',
-    file_uuid TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sender_id) REFERENCES users(id),
     FOREIGN KEY (receiver_id) REFERENCES users(id),
-    FOREIGN KEY (group_id) REFERENCES groups(id),
-    FOREIGN KEY (file_uuid) REFERENCES files(uuid)
+    FOREIGN KEY (group_id) REFERENCES groups(id)
 );
 
 -- 插入默认用户 (用户名: sanye, 密码: 123456 的MD5哈希)

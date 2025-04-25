@@ -521,6 +521,7 @@
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
     <script>
         const username = localStorage.getItem('username');
         if (!username) {
@@ -919,8 +920,7 @@
                     if (fileId) {
                         message = {
                             ...message,
-                            content: `/files/${fileId}`,
-                            file_uuid: fileId,
+                            content: fileId.toString(),
                             file_name: selectedFile.name,
                             file_size: selectedFile.size
                         };
@@ -951,9 +951,29 @@
             }
         }
 
+        // 添加生成文件 ID 的函数
+        async function generateFileId(file) {
+            return new Promise((resolve, reject) => {
+                const spark = new SparkMD5.ArrayBuffer();
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    spark.append(e.target.result);
+                    const hash = spark.end();
+                    resolve(hash);
+                };
+                
+                reader.onerror = function() {
+                    reject(new Error('Failed to read file'));
+                };
+                
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
         // 添加分片上传函数
         async function uploadFileChunks(file, chunkSize, totalChunks) {
-            // 使用文件名、大小和时间戳生成 SHA-256
+            // 生成文件 MD5
             const fileId = await generateFileId(file);
             
             for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -983,17 +1003,6 @@
             }
             
             return fileId;
-        }
-
-        // 添加生成文件 ID 的函数
-        async function generateFileId(file) {
-            const timestamp = Date.now();
-            const data = `${file.name}_${file.size}_${timestamp}`;
-            const msgBuffer = new TextEncoder().encode(data);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            return hashHex;
         }
 
         // 添加上传进度显示函数

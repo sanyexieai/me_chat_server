@@ -83,12 +83,29 @@ pub struct GroupMember {
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct File {
+    pub id: i64,
+    pub md5: String,
+    pub file_name: String,
+    pub file_size: i64,
+    pub file_path: String,
+    pub mime_type: Option<String>,
+    #[serde(
+        serialize_with = "serialize_datetime",
+        deserialize_with = "deserialize_datetime"
+    )]
+    pub created_at: DateTime<Utc>,
+    pub created_by: i64,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct Message {
     pub id: i64,
     pub sender_id: i64,
     pub receiver_id: Option<i64>,
     pub group_id: Option<i64>,
     pub content: String,
+    pub message_type: String,
     #[serde(
         serialize_with = "serialize_datetime",
         deserialize_with = "deserialize_datetime"

@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate rocket;
+
 mod models;
 use models::*;
 
@@ -27,10 +30,14 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use std::io::Write;
 use std::fs::File;
+use mime_guess;
+use tokio::sync::Mutex as TokioMutex;
+use hex;
 
 // 文件上传状态结构体
 struct FileUploadState {
-    uploads: Mutex<HashMap<String, Vec<Vec<u8>>>>,
+    uploads: TokioMutex<HashMap<String, Vec<Vec<u8>>>>,
+    db: SqlitePool,
 }
 
 // 分片上传请求结构体
@@ -713,60 +720,6 @@ async fn get_current_user(
     rocket::serde::json::Json(user)
 }
 
-#[derive(FromForm)]
-struct FileUpload<'r> {
-    file: TempFile<'r>,
-    file_name: String,
-}
-
-#[post("/api/upload_file", data = "<form>")]
-async fn upload_file(mut form: Form<FileUpload<'_>>) -> Result<Json<Value>, Status> {
-    println!("Received file upload request");
-    println!("File name: {:?}", form.file.name());
-    println!("File size: {:?}", form.file.len());
-    println!("Full file name: {}", form.file_name);
-
-    // 创建上传目录
-    let upload_dir = Path::new("uploads");
-    if !upload_dir.exists() {
-        if let Err(e) = fs::create_dir_all(upload_dir) {
-            eprintln!("Failed to create uploads directory: {}", e);
-            return Err(Status::InternalServerError);
-        }
-    }
-
-    // 获取扩展名
-    let extension = Path::new(&form.file_name)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
-    println!("Extension: {}", extension);
-
-    // 生成唯一文件名，保留扩展名
-    let file_name = if !extension.is_empty() {
-        format!("{}.{}", Uuid::new_v4(), extension)
-    } else {
-        Uuid::new_v4().to_string()
-    };
-    println!("Generated filename: {}", file_name);
-    
-    let file_path = upload_dir.join(&file_name);
-
-    // 保存文件
-    if let Err(e) = form.file.copy_to(&file_path).await {
-        eprintln!("Failed to save file: {}", e);
-        return Err(Status::InternalServerError);
-    }
-
-    println!("File saved successfully: {}", file_path.display());
-
-    // 返回文件URL
-    Ok(Json(json!({
-        "success": true,
-        "file_url": format!("/files/{}", file_name)
-    })))
-}
-
 #[get("/files/<file_name>")]
 async fn get_file(file_name: &str) -> Option<NamedFile> {
     let file_path = Path::new("uploads").join(file_name);
@@ -800,7 +753,8 @@ async fn main() {
 
     // 创建文件上传状态
     let file_upload_state = FileUploadState {
-        uploads: Mutex::new(HashMap::new()),
+        uploads: TokioMutex::new(HashMap::new()),
+        db: db.clone(),
     };
 
     println!("🚀 Chat Server is starting...");
@@ -855,6 +809,7 @@ async fn main() {
 async fn upload_file_chunk(
     mut form: Form<ChunkUpload<'_>>,
     state: &State<FileUploadState>,
+    user: AuthenticatedUser,
 ) -> Result<Json<Value>, Status> {
     println!("Received file chunk upload request");
     println!("File name: {:?}", form.file_name);
@@ -883,7 +838,7 @@ async fn upload_file_chunk(
     fs::remove_file(&temp_path).ok(); // 清理临时文件
 
     // 将分片数据存储到状态中
-    let mut uploads = state.uploads.lock().unwrap();
+    let mut uploads = state.uploads.lock().await;
     let chunks = uploads.entry(form.file_id.clone()).or_insert_with(Vec::new);
     
     // 确保分片索引正确
@@ -923,12 +878,48 @@ async fn upload_file_chunk(
         })?;
 
         // 合并所有分片
+        let mut hasher = Md5::new();
         for chunk in chunks.iter() {
             if let Err(e) = file.write_all(chunk) {
                 eprintln!("Failed to write chunk: {}", e);
                 return Err(Status::InternalServerError);
             }
+            hasher.update(chunk);
         }
+        let file_md5 = hex::encode(hasher.finalize());
+
+        // 验证文件 MD5
+        if file_md5 != form.file_id {
+            eprintln!("File MD5 mismatch: expected {}, got {}", form.file_id, file_md5);
+            return Err(Status::BadRequest);
+        }
+
+        // 保存文件信息到数据库
+        let mut file_size: i64 = 0;
+        for chunk in chunks.iter() {
+            file_size += chunk.len() as i64;
+        }
+        let mime_type = mime_guess::from_path(&form.file_name).first_or_octet_stream();
+        
+        let db = state.db.clone();
+        let file_id = sqlx::query(
+            "INSERT INTO files (md5, file_name, file_size, file_path, mime_type, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&form.file_id)
+        .bind(&form.file_name)
+        .bind(file_size)
+        .bind(&final_filename)
+        .bind(mime_type.to_string())
+        .bind(user.id)
+        .bind(chrono::Utc::now())
+        .execute(&db)
+        .await
+        .map_err(|e| {
+            eprintln!("Failed to save file info to database: {}", e);
+            Status::InternalServerError
+        })?
+        .last_insert_rowid();
 
         // 清理上传状态
         uploads.remove(&form.file_id);
@@ -938,7 +929,8 @@ async fn upload_file_chunk(
         // 返回文件URL
         Ok(Json(json!({
             "success": true,
-            "file_url": format!("/files/{}", final_filename)
+            "file_url": format!("/files/{}", final_filename),
+            "file_id": file_id
         })))
     } else {
         // 返回上传进度
