@@ -802,7 +802,7 @@
 
                 let contentHtml = '';
                 if (message.message_type === 'file') {
-                    const fileUrl = message.content;
+                    const fileUrl = message.file_path;
                     const fileName = message.file_name || '文件';
                     const fileSize = formatFileSize(message.file_size);
                     
@@ -950,12 +950,13 @@
                     // 分片上传
                     const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
                     const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
-                    const fileId = await uploadFileChunks(selectedFile, CHUNK_SIZE, totalChunks);
+                    const fileData = await uploadFileChunks(selectedFile, CHUNK_SIZE, totalChunks);
                     
-                    if (fileId) {
+                    if (fileData) {
                         message = {
                             ...message,
-                            content: fileId.toString(),
+                            content: fileData.file_id.toString(),
+                            file_path: fileData.file_url,
                             file_name: selectedFile.name,
                             file_size: selectedFile.size
                         };
@@ -1015,7 +1016,7 @@
         }
 
         // 添加生成文件 ID 的函数
-        async function generateFileId(file) {
+        async function generateFileMd5(file) {
             return new Promise((resolve, reject) => {
                 const spark = new SparkMD5.ArrayBuffer();
                 const reader = new FileReader();
@@ -1033,11 +1034,11 @@
                 reader.readAsArrayBuffer(file);
             });
         }
-
+        var fileData = null;
         // 添加分片上传函数
         async function uploadFileChunks(file, chunkSize, totalChunks) {
             // 生成文件 MD5
-            const fileId = await generateFileId(file);
+            const fileMd5 = await generateFileMd5(file);
             
             for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
                 const start = chunkIndex * chunkSize;
@@ -1047,7 +1048,7 @@
                 const formData = new FormData();
                 formData.append('file', chunk);
                 formData.append('file_name', file.name);
-                formData.append('file_id', fileId);
+                formData.append('md5', fileMd5);
                 formData.append('chunk_index', chunkIndex);
                 formData.append('total_chunks', totalChunks);
                 
@@ -1055,9 +1056,13 @@
                     method: 'POST',
                     body: formData
                 });
-                
                 if (!response.ok) {
                     throw new Error(`上传分片 ${chunkIndex + 1}/${totalChunks} 失败`);
+                }
+                //全部上传完成后，获取文件ID    
+                if (chunkIndex === totalChunks - 1) {
+                    const data = await response.json();
+                    fileData = data;
                 }
                 
                 // 更新上传进度
@@ -1065,7 +1070,7 @@
                 updateUploadProgress(progress);
             }
             
-            return fileId;
+            return fileData;
         }
 
         // 修改上传进度显示函数
