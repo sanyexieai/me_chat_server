@@ -587,19 +587,26 @@ async fn create_group(
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+struct FriendInfo {
+    id: i64,
+    username: String,
+    created_at: chrono::NaiveDateTime,
+}
+
 #[rocket::get("/friends")]
 async fn get_friends(
     state: &State<ChatState>,
     user: AuthenticatedUser,
-) -> rocket::serde::json::Json<Vec<User>> {
+) -> rocket::serde::json::Json<Vec<FriendInfo>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&user.username)
         .fetch_one(&state.db)
         .await
         .unwrap();
 
-    let friends = sqlx::query_as::<_, User>(
-        "SELECT u.* FROM users u 
+    let friends = sqlx::query_as::<_, FriendInfo>(
+        "SELECT u.id, u.username, u.created_at FROM users u 
         JOIN friendships f ON (f.friend_id = u.id AND f.user_id = ?) OR (f.user_id = u.id AND f.friend_id = ?)",
     )
     .bind(user.id)
@@ -768,17 +775,29 @@ async fn get_group_messages(
     rocket::serde::json::Json(messages)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UserInfo {
+    id: i64,
+    username: String,
+    created_at: chrono::NaiveDateTime,
+}
+
 #[rocket::get("/current_user")]
 async fn get_current_user(
     state: &State<ChatState>,
     user: AuthenticatedUser,
-) -> rocket::serde::json::Json<User> {
+) -> rocket::serde::json::Json<UserInfo> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
         .bind(&user.username)
         .fetch_one(&state.db)
         .await
         .unwrap();
-    rocket::serde::json::Json(user)
+    
+    rocket::serde::json::Json(UserInfo {
+        id: user.id,
+        username: user.username,
+        created_at: user.created_at,
+    })
 }
 
 #[post("/api/upload_file_chunk", data = "<form>")]
