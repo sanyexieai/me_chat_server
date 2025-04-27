@@ -3,7 +3,7 @@ use models::*;
 
 use futures::stream::StreamExt;
 use include_dir::{include_dir, Dir};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use md5::{Digest, Md5};
 use rocket::form::{Form, FromForm};
 use rocket::fs::{FileServer, TempFile};
@@ -125,17 +125,18 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
         if let Some(token) = token {
             // 验证 JWT token
             match decode::<Claims>(
-                &token,
+                token,
                 &DecodingKey::from_secret(JWT_SECRET),
                 &Validation::default(),
             ) {
                 Ok(token_data) => {
                     let username = token_data.claims.username;
                     let db = request.rocket().state::<SqlitePool>().unwrap();
-                    if let Ok(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
-                        .bind(&username)
-                        .fetch_one(db)
-                        .await
+                    if let Ok(user) =
+                        sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
+                            .bind(&username)
+                            .fetch_one(db)
+                            .await
                     {
                         Outcome::Success(AuthenticatedUser {
                             username,
@@ -423,7 +424,6 @@ fn static_files(file: std::path::PathBuf) -> Option<content::RawHtml<&'static st
 async fn login(
     request: rocket::serde::json::Json<LoginRequest>,
     state: &State<ChatState>,
-    cookies: &rocket::http::CookieJar<'_>,
 ) -> rocket::serde::json::Json<AuthResponse> {
     // 计算密码哈希
     let mut hasher = Md5::new();
@@ -831,7 +831,7 @@ async fn get_current_user(
         .fetch_one(&state.db)
         .await
         .unwrap();
-    
+
     rocket::serde::json::Json(UserInfo {
         id: user.id,
         username: user.username,
