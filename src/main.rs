@@ -1,10 +1,9 @@
-extern crate rocket;
-
 mod models;
 use models::*;
 
 use futures::stream::StreamExt;
 use include_dir::{include_dir, Dir};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use md5::{Digest, Md5};
 use rocket::form::{Form, FromForm};
 use rocket::fs::{FileServer, TempFile};
@@ -28,6 +27,17 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use tokio::sync::Mutex as TokioMutex;
+
+// JWT 密钥
+const JWT_SECRET: &[u8] = b"your-secret-key";
+const JWT_EXPIRATION: i64 = 24 * 60 * 60; // 24 hours
+
+// JWT Claims 结构体
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    username: String,
+    exp: i64,
+}
 
 // 文件上传状态结构体
 struct FileUploadState {
@@ -105,21 +115,37 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
     type Error = ();
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        let cookies = request.cookies();
-        if let Some(cookie) = cookies.get_private("username") {
-            let username = cookie.value().to_string();
-            let db = request.rocket().state::<SqlitePool>().unwrap();
-            if let Ok(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
-                .bind(&username)
-                .fetch_one(db)
-                .await
-            {
-                Outcome::Success(AuthenticatedUser {
-                    username,
-                    id: user.id,
-                })
-            } else {
-                Outcome::Forward(Status::Unauthorized)
+        // 从请求头获取 token
+        let token = request
+            .headers()
+            .get_one("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer "))
+            .or_else(|| request.query_value::<&str>("token")?.ok());
+
+        if let Some(token) = token {
+            // 验证 JWT token
+            match decode::<Claims>(
+                &token,
+                &DecodingKey::from_secret(JWT_SECRET),
+                &Validation::default(),
+            ) {
+                Ok(token_data) => {
+                    let username = token_data.claims.username;
+                    let db = request.rocket().state::<SqlitePool>().unwrap();
+                    if let Ok(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
+                        .bind(&username)
+                        .fetch_one(db)
+                        .await
+                    {
+                        Outcome::Success(AuthenticatedUser {
+                            username,
+                            id: user.id,
+                        })
+                    } else {
+                        Outcome::Forward(Status::Unauthorized)
+                    }
+                }
+                Err(_) => Outcome::Forward(Status::Unauthorized),
             }
         } else {
             Outcome::Forward(Status::Unauthorized)
@@ -413,15 +439,28 @@ async fn login(
         .unwrap()
     {
         Some(_) => {
-            // 登录成功，设置 cookie
-            cookies.add_private(rocket::http::Cookie::new(
-                "username",
-                request.username.clone(),
-            ));
+            // 生成 JWT token
+            let expiration = chrono::Utc::now()
+                .checked_add_signed(chrono::Duration::seconds(JWT_EXPIRATION))
+                .expect("valid timestamp")
+                .timestamp();
+
+            let claims = Claims {
+                username: request.username.clone(),
+                exp: expiration,
+            };
+
+            let token = encode(
+                &Header::default(),
+                &claims,
+                &EncodingKey::from_secret(JWT_SECRET),
+            )
+            .unwrap();
+
             rocket::serde::json::Json(AuthResponse {
                 success: true,
                 message: "登录成功".to_string(),
-                token: Some(request.username.clone()),
+                token: Some(token),
             })
         }
         None => rocket::serde::json::Json(AuthResponse {

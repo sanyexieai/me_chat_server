@@ -539,47 +539,37 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
     <script>
-        const username = localStorage.getItem('username');
-        if (!username) {
+        const jwtToken = localStorage.getItem('jwt_token');
+        if (!jwtToken) {
             window.location.href = '/login';
         }
 
+        // 解析 JWT token 获取用户名
+        const tokenPayload = JSON.parse(atob(jwtToken.split('.')[1]));
+        const username = tokenPayload.username;
         document.getElementById('currentUsername').textContent = username;
 
         let ws = null;
         let friends = [];
         let groups = [];
-        let currentChat = 0; // 默认选中文件传输助手
-        let currentChatType = "person"; // 默认类型为个人
-        let currentUserId = 0; // 当前用户ID
-        // 添加消息存储结构
-        let chatMessages = new Map(); // 使用Map存储每个会话的消息列表
+        let currentChat = 0;
+        let currentChatType = "person";
+        let currentUserId = 0;
+        let chatMessages = new Map();
         let selectedFile = null;
 
-        // 获取会话的唯一标识
-        function getChatKey(chatId, chatType) {
-            return `${chatType}_${chatId}`;
-        }
-
-        // 获取当前会话的消息列表
-        function getCurrentChatMessages() {
-            const chatKey = getChatKey(currentChat, currentChatType);
-            return chatMessages.get(chatKey) || [];
-        }
-
-        // 添加消息到指定会话
-        function addMessageToChat(chatId, chatType, message) {
-            const chatKey = getChatKey(chatId, chatType);
-            if (!chatMessages.has(chatKey)) {
-                chatMessages.set(chatKey, []);
-            }
-            chatMessages.get(chatKey).push(message);
-        }
+        // 添加 JWT token 到请求头
+        const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`
+        };
 
         // 获取好友列表
         async function fetchFriends() {
             try {
-                const response = await fetch('/api/friends');
+                const response = await fetch('/api/friends', {
+                    headers: headers
+                });
                 if (response.ok) {
                     friends = await response.json();
                     renderFriendsList();
@@ -592,7 +582,9 @@
         // 获取群组列表
         async function fetchGroups() {
             try {
-                const response = await fetch('/api/groups');
+                const response = await fetch('/api/groups', {
+                    headers: headers
+                });
                 if (response.ok) {
                     groups = await response.json();
                     renderFriendsList();
@@ -605,7 +597,9 @@
         // 获取当前用户信息
         async function fetchCurrentUser() {
             try {
-                const response = await fetch('/api/current_user');
+                const response = await fetch('/api/current_user', {
+                    headers: headers
+                });
                 if (response.ok) {
                     const user = await response.json();
                     currentUserId = user.id;
@@ -723,9 +717,7 @@
             try {
                 const response = await fetch('/api/add_friend', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: headers,
                     body: JSON.stringify({ friend_username: friendUsername })
                 });
                 if (response.ok) {
@@ -757,7 +749,7 @@
                 ws.close();
             }
 
-            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws = new WebSocket(`ws://${window.location.host}/ws?token=${jwtToken}`);
             
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);

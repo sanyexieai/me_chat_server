@@ -110,7 +110,7 @@
 
                 const data = await response.json();
                 if (data.success) {
-                    localStorage.setItem('username', data.token);
+                    localStorage.setItem('jwt_token', data.token);
                     window.location.href = '/';
                 } else {
                     errorDiv.textContent = data.message;
