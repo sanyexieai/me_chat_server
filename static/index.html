@@ -684,7 +684,9 @@
                 const url = type === 'person' ? `/api/messages/${targetId}` : `/api/group_messages/${targetId}`;
                 console.log('加载历史消息:', url);
                 
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    headers: headers
+                });
                 if (response.ok) {
                     const messages = await response.json();
                     console.log('历史消息:', messages);
@@ -1020,163 +1022,186 @@
                         renderChatMessages(currentChat, currentChatType);
                     }
                     
-                    removeSelectedFile();
+            }
+        } else {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // 设置正确的消息类型和目标ID
+                message.timestamp = Math.floor(Date.now() / 1000);
+                if (currentChatType === 'group') {
+                    message.group_id = currentChat;
+                    message.receiver_id = null;
                 }
-            } else {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    message.timestamp = Math.floor(Date.now() / 1000);
-                    ws.send(JSON.stringify(message));
-                    appendMessage(message);
-                    messageInput.value = '';
-                }
+                ws.send(JSON.stringify(message));
+                appendMessage(message);
+                messageInput.value = '';
             }
         }
+    }
 
-        // 添加生成文件 ID 的函数
-        async function generateFileMd5(file) {
-            return new Promise((resolve, reject) => {
-                const spark = new SparkMD5.ArrayBuffer();
-                const reader = new FileReader();
-                
-                reader.onload = function(e) {
-                    spark.append(e.target.result);
-                    const hash = spark.end();
-                    resolve(hash);
-                };
-                
-                reader.onerror = function() {
-                    reject(new Error('Failed to read file'));
-                };
-                
-                reader.readAsArrayBuffer(file);
-            });
-        }
-        var fileData = null;
-        // 添加分片上传函数
-        async function uploadFileChunks(file, chunkSize, totalChunks) {
-            // 生成文件 MD5
-            const fileMd5 = await generateFileMd5(file);
+    // 添加生成文件 ID 的函数
+    async function generateFileMd5(file) {
+        return new Promise((resolve, reject) => {
+            const spark = new SparkMD5.ArrayBuffer();
+            const reader = new FileReader();
             
-            // 先发送第一片检查文件是否存在
-            const firstChunk = file.slice(0, 0); // 第一片不发送实际数据
+            reader.onload = function(e) {
+                spark.append(e.target.result);
+                const hash = spark.end();
+                resolve(hash);
+            };
+            
+            reader.onerror = function() {
+                reject(new Error('Failed to read file'));
+            };
+            
+            reader.readAsArrayBuffer(file);
+        });
+    }
+    var fileData = null;
+    // 添加分片上传函数
+    async function uploadFileChunks(file, chunkSize, totalChunks) {
+        // 生成文件 MD5
+        const fileMd5 = await generateFileMd5(file);
+        
+        // 先发送第一片检查文件是否存在
+        const firstChunk = file.slice(0, 0); // 第一片不发送实际数据
+        const formData = new FormData();
+        formData.append('file', firstChunk);
+        formData.append('file_name', file.name);
+        formData.append('md5', fileMd5);
+        formData.append('chunk_index', 0);
+        formData.append('total_chunks', totalChunks + 1); // 总片数加1，因为第一片用于检查
+        
+        const firstResponse = await fetch('/api/upload_file_chunk', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!firstResponse.ok) {
+            throw new Error('检查文件失败');
+        }
+        
+        const firstData = await firstResponse.json();
+        
+        // 如果文件已存在，直接返回文件信息
+        if (firstData.skip_upload) {
+            return firstData;
+        }
+        
+        // 文件不存在，继续上传其他分片
+        for (let chunkIndex = 1; chunkIndex < totalChunks + 1; chunkIndex++) {
+            const start = (chunkIndex - 1) * chunkSize; // 从索引0开始计算实际数据
+            const end = Math.min(start + chunkSize, file.size);
+            const chunk = file.slice(start, end);
+            
             const formData = new FormData();
-            formData.append('file', firstChunk);
+            formData.append('file', chunk);
             formData.append('file_name', file.name);
             formData.append('md5', fileMd5);
-            formData.append('chunk_index', 0);
-            formData.append('total_chunks', totalChunks + 1); // 总片数加1，因为第一片用于检查
+            formData.append('chunk_index', chunkIndex);
+            formData.append('total_chunks', totalChunks + 1);
             
-            const firstResponse = await fetch('/api/upload_file_chunk', {
+            const response = await fetch('/api/upload_file_chunk', {
                 method: 'POST',
                 body: formData
             });
             
-            if (!firstResponse.ok) {
-                throw new Error('检查文件失败');
+            if (!response.ok) {
+                throw new Error(`上传分片 ${chunkIndex}/${totalChunks + 1} 失败`);
             }
             
-            const firstData = await firstResponse.json();
+            // 更新上传进度
+            const progress = Math.round((chunkIndex / (totalChunks + 1)) * 100);
+            updateUploadProgress(progress);
             
-            // 如果文件已存在，直接返回文件信息
-            if (firstData.skip_upload) {
-                return firstData;
+            // 如果是最后一片，获取文件信息
+            if (chunkIndex === totalChunks) {
+                const data = await response.json();
+                fileData = data;
             }
-            
-            // 文件不存在，继续上传其他分片
-            for (let chunkIndex = 1; chunkIndex < totalChunks + 1; chunkIndex++) {
-                const start = (chunkIndex - 1) * chunkSize; // 从索引0开始计算实际数据
-                const end = Math.min(start + chunkSize, file.size);
-                const chunk = file.slice(start, end);
-                
-                const formData = new FormData();
-                formData.append('file', chunk);
-                formData.append('file_name', file.name);
-                formData.append('md5', fileMd5);
-                formData.append('chunk_index', chunkIndex);
-                formData.append('total_chunks', totalChunks + 1);
-                
-                const response = await fetch('/api/upload_file_chunk', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`上传分片 ${chunkIndex}/${totalChunks + 1} 失败`);
-                }
-                
-                // 更新上传进度
-                const progress = Math.round((chunkIndex / (totalChunks + 1)) * 100);
-                updateUploadProgress(progress);
-                
-                // 如果是最后一片，获取文件信息
-                if (chunkIndex === totalChunks) {
-                    const data = await response.json();
-                    fileData = data;
-                }
-            }
-            
-            return fileData;
         }
+        
+        return fileData;
+    }
 
-        // 修改上传进度显示函数
-        function updateUploadProgress(progress) {
-            const messages = document.querySelectorAll('.upload-message');
-            messages.forEach(message => {
-                const progressBar = message.querySelector('.progress');
-                if (progressBar) {
-                    progressBar.style.width = `${progress}%`;
-                }
-            });
-        }
-
-        // 事件监听器
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                sendMessage();
+    // 修改上传进度显示函数
+    function updateUploadProgress(progress) {
+        const messages = document.querySelectorAll('.upload-message');
+        messages.forEach(message => {
+            const progressBar = message.querySelector('.progress');
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
             }
         });
+    }
 
-        document.getElementById('sendButton').addEventListener('click', sendMessage);
-        document.getElementById('logoutButton').addEventListener('click', () => {
-            if (ws) {
-                ws.close();
-            }
-            localStorage.removeItem('username');
-            window.location.href = '/login';
-        });
-
-        document.getElementById('addFriendBtn').addEventListener('click', openAddFriendModal);
-        document.getElementById('closeModalBtn').addEventListener('click', closeAddFriendModal);
-        document.getElementById('cancelAddBtn').addEventListener('click', closeAddFriendModal);
-        document.getElementById('confirmAddBtn').addEventListener('click', () => {
-            const friendUsername = document.getElementById('friendUsername').value.trim();
-            if (friendUsername) {
-                addFriend(friendUsername);
-            }
-        });
-
-        // 添加文件大小格式化函数
-        function formatFileSize(bytes) {
-            if (bytes === 0) return '0 B';
-            const k = 1024;
-            const sizes = ['B', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    // 事件监听器
+    document.getElementById('messageInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendMessage();
         }
+    });
 
-        // 初始化
-        async function init() {
-            await fetchCurrentUser();
-            await fetchFriends();
-            await fetchGroups();
-            connectToChat();
-            
-            // 默认选中文件传输助手（使用当前用户ID）
-            selectChat(currentUserId, 'person');
+    document.getElementById('sendButton').addEventListener('click', sendMessage);
+    document.getElementById('logoutButton').addEventListener('click', () => {
+        if (ws) {
+            ws.close();
         }
+        localStorage.removeItem('username');
+        window.location.href = '/login';
+    });
 
-        // 启动初始化
-        init();
+    document.getElementById('addFriendBtn').addEventListener('click', openAddFriendModal);
+    document.getElementById('closeModalBtn').addEventListener('click', closeAddFriendModal);
+    document.getElementById('cancelAddBtn').addEventListener('click', closeAddFriendModal);
+    document.getElementById('confirmAddBtn').addEventListener('click', () => {
+        const friendUsername = document.getElementById('friendUsername').value.trim();
+        if (friendUsername) {
+            addFriend(friendUsername);
+        }
+    });
+
+    // 添加文件大小格式化函数
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // 获取聊天会话的键
+    function getChatKey(chatId, chatType) {
+        return `${chatType}_${chatId}`;
+    }
+
+    // 添加消息到指定聊天
+    function addMessageToChat(chatId, chatType, message) {
+        const chatKey = getChatKey(chatId, chatType);
+        const messages = chatMessages.get(chatKey) || [];
+        messages.push(message);
+        chatMessages.set(chatKey, messages);
+    }
+
+    // 获取当前聊天会话的消息
+    function getCurrentChatMessages() {
+        const chatKey = getChatKey(currentChat, currentChatType);
+        return chatMessages.get(chatKey) || [];
+    }
+
+    // 初始化
+    async function init() {
+        await fetchCurrentUser();
+        await fetchFriends();
+        await fetchGroups();
+        connectToChat();
+        
+        // 默认选中文件传输助手（使用当前用户ID）
+        selectChat(currentUserId, 'person');
+    }
+
+    // 启动初始化
+    init();
     </script>
 </body>
 </html> 

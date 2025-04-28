@@ -438,7 +438,7 @@ async fn login(
         .await
         .unwrap()
     {
-        Some(_) => {
+        Some(user   ) => {
             // 生成 JWT token
             let expiration = chrono::Utc::now()
                 .checked_add_signed(chrono::Duration::seconds(JWT_EXPIRATION))
@@ -461,12 +461,14 @@ async fn login(
                 success: true,
                 message: "登录成功".to_string(),
                 token: Some(token),
+                user_id: Some(user.id),
             })
         }
         None => rocket::serde::json::Json(AuthResponse {
             success: false,
             message: "用户名或密码错误".to_string(),
             token: None,
+            user_id: None,
         }),
     }
 }
@@ -499,12 +501,14 @@ async fn register(
                 success: true,
                 message: "注册成功".to_string(),
                 token: Some(request.username.clone()),
+                user_id: None,
             })
         }
         Err(_) => rocket::serde::json::Json(AuthResponse {
             success: false,
             message: "用户名已存在".to_string(),
             token: None,
+            user_id: None,
         }),
     }
 }
@@ -548,6 +552,7 @@ async fn add_friend(
                     success: false,
                     message: "已经是好友".to_string(),
                     token: None,
+                    user_id: Some(user.id),
                 });
             }
 
@@ -563,12 +568,14 @@ async fn add_friend(
                 success: true,
                 message: "添加好友成功".to_string(),
                 token: None,
+                user_id: Some(user.id),
             })
         }
         None => rocket::serde::json::Json(AuthResponse {
             success: false,
             message: "用户不存在".to_string(),
             token: None,
+            user_id: None,
         }),
     }
 }
@@ -623,6 +630,7 @@ async fn create_group(
         success: true,
         message: format!("群组创建成功，ID: {}", group_id),
         token: None,
+        user_id: Some(user.id),
     })
 }
 
