@@ -1031,17 +1031,21 @@
                         renderChatMessages(currentChat, currentChatType);
                     }
                     
-                    removeSelectedFile();
+            }
+        } else {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // 设置正确的消息类型和目标ID
+                message.timestamp = Math.floor(Date.now() / 1000);
+                if (currentChatType === 'group') {
+                    message.group_id = currentChat;
+                    message.receiver_id = null;
                 }
-            } else {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    message.timestamp = Math.floor(Date.now() / 1000);
-                    ws.send(JSON.stringify(message));
-                    appendMessage(message);
-                    messageInput.value = '';
-                }
+                ws.send(JSON.stringify(message));
+                appendMessage(message);
+                messageInput.value = '';
             }
         }
+    }
 
         // 添加生成文件 ID 的函数
         async function generateFileMd5(file) {
@@ -1135,42 +1139,42 @@
             return fileData;
         }
 
-        // 修改上传进度显示函数
-        function updateUploadProgress(progress) {
-            const messages = document.querySelectorAll('.upload-message');
-            messages.forEach(message => {
-                const progressBar = message.querySelector('.progress');
-                if (progressBar) {
-                    progressBar.style.width = `${progress}%`;
-                }
-            });
+    // 修改上传进度显示函数
+    function updateUploadProgress(progress) {
+        const messages = document.querySelectorAll('.upload-message');
+        messages.forEach(message => {
+            const progressBar = message.querySelector('.progress');
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
+            }
+        });
+    }
+
+    // 事件监听器
+    document.getElementById('messageInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendMessage();
         }
+    });
 
-        // 事件监听器
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
+    document.getElementById('sendButton').addEventListener('click', sendMessage);
+    document.getElementById('logoutButton').addEventListener('click', () => {
+        if (ws) {
+            ws.close();
+        }
+        localStorage.removeItem('username');
+        window.location.href = '/login';
+    });
 
-        document.getElementById('sendButton').addEventListener('click', sendMessage);
-        document.getElementById('logoutButton').addEventListener('click', () => {
-            if (ws) {
-                ws.close();
-            }
-            localStorage.removeItem('username');
-            window.location.href = '/login';
-        });
-
-        document.getElementById('addFriendBtn').addEventListener('click', openAddFriendModal);
-        document.getElementById('closeModalBtn').addEventListener('click', closeAddFriendModal);
-        document.getElementById('cancelAddBtn').addEventListener('click', closeAddFriendModal);
-        document.getElementById('confirmAddBtn').addEventListener('click', () => {
-            const friendUsername = document.getElementById('friendUsername').value.trim();
-            if (friendUsername) {
-                addFriend(friendUsername);
-            }
-        });
+    document.getElementById('addFriendBtn').addEventListener('click', openAddFriendModal);
+    document.getElementById('closeModalBtn').addEventListener('click', closeAddFriendModal);
+    document.getElementById('cancelAddBtn').addEventListener('click', closeAddFriendModal);
+    document.getElementById('confirmAddBtn').addEventListener('click', () => {
+        const friendUsername = document.getElementById('friendUsername').value.trim();
+        if (friendUsername) {
+            addFriend(friendUsername);
+        }
+    });
 
         // 添加文件大小格式化函数
         function formatFileSize(bytes) {
@@ -1200,19 +1204,19 @@
             return chatMessages.get(chatKey) || [];
         }
 
-        // 初始化
-        async function init() {
-            await fetchCurrentUser();
-            await fetchFriends();
-            await fetchGroups();
-            connectToChat();
-            
-            // 默认选中文件传输助手（使用当前用户ID）
-            selectChat(currentUserId, 'person');
-        }
+    // 初始化
+    async function init() {
+        await fetchCurrentUser();
+        await fetchFriends();
+        await fetchGroups();
+        connectToChat();
+        
+        // 默认选中文件传输助手（使用当前用户ID）
+        selectChat(currentUserId, 'person');
+    }
 
-        // 启动初始化
-        init();
+    // 启动初始化
+    init();
     </script>
 </body>
 </html> 
