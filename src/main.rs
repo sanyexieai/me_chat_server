@@ -438,7 +438,8 @@ async fn login(
         .await
         .unwrap()
     {
-        Some(_) => {
+        Some(user) => {
+            println!("登录成功，用户信息: {:?}", user);
             // 生成 JWT token
             let expiration = chrono::Utc::now()
                 .checked_add_signed(chrono::Duration::seconds(JWT_EXPIRATION))
@@ -457,16 +458,21 @@ async fn login(
             )
             .unwrap();
 
+            println!("生成的 token: {}", token);
+            println!("用户 ID: {}", user.id);
+
             rocket::serde::json::Json(AuthResponse {
                 success: true,
                 message: "登录成功".to_string(),
                 token: Some(token),
+                user_id: Some(user.id),
             })
         }
         None => rocket::serde::json::Json(AuthResponse {
             success: false,
             message: "用户名或密码错误".to_string(),
             token: None,
+            user_id: None,
         }),
     }
 }
@@ -483,30 +489,44 @@ async fn register(
     let password_hash = hex::encode(hasher.finalize());
 
     // 注册新用户
-    match sqlx::query("INSERT INTO users (username, password) VALUES (?, ?)")
+    let user_id = sqlx::query("INSERT INTO users (username, password) VALUES (?, ?)")
         .bind(&request.username)
         .bind(&password_hash)
         .execute(&state.db)
         .await
-    {
-        Ok(_) => {
-            // 注册成功，设置 cookie
-            cookies.add_private(rocket::http::Cookie::new(
-                "username",
-                request.username.clone(),
-            ));
-            rocket::serde::json::Json(AuthResponse {
-                success: true,
-                message: "注册成功".to_string(),
-                token: Some(request.username.clone()),
-            })
-        }
-        Err(_) => rocket::serde::json::Json(AuthResponse {
-            success: false,
-            message: "用户名已存在".to_string(),
-            token: None,
-        }),
-    }
+        .unwrap()
+        .last_insert_rowid();
+
+    // 注册成功，设置 cookie
+    cookies.add_private(rocket::http::Cookie::new(
+        "username",
+        request.username.clone(),
+    ));
+
+    // 生成 JWT token
+    let expiration = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::seconds(JWT_EXPIRATION))
+        .expect("valid timestamp")
+        .timestamp();
+
+    let claims = Claims {
+        username: request.username.clone(),
+        exp: expiration,
+    };
+
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(JWT_SECRET),
+    )
+    .unwrap();
+
+    rocket::serde::json::Json(AuthResponse {
+        success: true,
+        message: "注册成功".to_string(),
+        token: Some(token),
+        user_id: Some(user_id),
+    })
 }
 
 #[rocket::post("/add_friend", data = "<request>")]
@@ -548,6 +568,7 @@ async fn add_friend(
                     success: false,
                     message: "已经是好友".to_string(),
                     token: None,
+                    user_id: None,
                 });
             }
 
@@ -563,12 +584,14 @@ async fn add_friend(
                 success: true,
                 message: "添加好友成功".to_string(),
                 token: None,
+                user_id: None,
             })
         }
         None => rocket::serde::json::Json(AuthResponse {
             success: false,
             message: "用户不存在".to_string(),
             token: None,
+            user_id: None,
         }),
     }
 }
@@ -623,6 +646,7 @@ async fn create_group(
         success: true,
         message: format!("群组创建成功，ID: {}", group_id),
         token: None,
+        user_id: None,
     })
 }
 

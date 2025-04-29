@@ -558,17 +558,13 @@
         let chatMessages = new Map();
         let selectedFile = null;
 
-        // 添加 JWT token 到请求头
-        const headers = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${jwtToken}`
-        };
-
         // 获取好友列表
         async function fetchFriends() {
             try {
                 const response = await fetch('/api/friends', {
-                    headers: headers
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    }
                 });
                 if (response.ok) {
                     friends = await response.json();
@@ -583,7 +579,9 @@
         async function fetchGroups() {
             try {
                 const response = await fetch('/api/groups', {
-                    headers: headers
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    }
                 });
                 if (response.ok) {
                     groups = await response.json();
@@ -598,7 +596,9 @@
         async function fetchCurrentUser() {
             try {
                 const response = await fetch('/api/current_user', {
-                    headers: headers
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    }
                 });
                 if (response.ok) {
                     const user = await response.json();
@@ -684,7 +684,11 @@
                 const url = type === 'person' ? `/api/messages/${targetId}` : `/api/group_messages/${targetId}`;
                 console.log('加载历史消息:', url);
                 
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    }
+                });
                 if (response.ok) {
                     const messages = await response.json();
                     console.log('历史消息:', messages);
@@ -717,7 +721,10 @@
             try {
                 const response = await fetch('/api/add_friend', {
                     method: 'POST',
-                    headers: headers,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${jwtToken}`
+                    },
                     body: JSON.stringify({ friend_username: friendUsername })
                 });
                 if (response.ok) {
@@ -759,7 +766,11 @@
                 // 如果是文件消息，需要获取文件信息
                 if (message.message_type === 'file') {
                     // 从数据库获取文件信息
-                    fetch(`/api/files/${message.content}`)
+                    fetch(`/api/files/${message.content}`, {
+                        headers: {
+                            'Authorization': `Bearer ${jwtToken}`
+                        }
+                    })
                         .then(response => response.json())
                         .then(fileInfo => {
                             // 更新消息中的文件信息
@@ -1068,6 +1079,9 @@
             
             const firstResponse = await fetch('/api/upload_file_chunk', {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${jwtToken}`
+                },
                 body: formData
             });
             
@@ -1097,6 +1111,9 @@
                 
                 const response = await fetch('/api/upload_file_chunk', {
                     method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    },
                     body: formData
                 });
                 
@@ -1162,6 +1179,25 @@
             const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // 获取聊天会话的唯一键
+        function getChatKey(chatId, chatType) {
+            return `${chatType}_${chatId}`;
+        }
+
+        // 添加消息到指定会话
+        function addMessageToChat(chatId, chatType, message) {
+            const chatKey = getChatKey(chatId, chatType);
+            let messages = chatMessages.get(chatKey) || [];
+            messages.push(message);
+            chatMessages.set(chatKey, messages);
+        }
+
+        // 获取当前会话的消息列表
+        function getCurrentChatMessages() {
+            const chatKey = getChatKey(currentChat, currentChatType);
+            return chatMessages.get(chatKey) || [];
         }
 
         // 初始化
